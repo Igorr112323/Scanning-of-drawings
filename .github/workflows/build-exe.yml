@@ -74,7 +74,15 @@ jobs:
           python -m PyInstaller --noconfirm DrawToSTEP.spec 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== BUILD FAILED — tail of build.log ====="
-            Get-Content build.log -Tail 150
+            Get-Content build.log -Tail 150 | Write-Host
+            $i = 0
+            Get-Content build.log -Tail 40 | ForEach-Object {
+              $l = ($_ -replace '%', '%25') -replace '[\r\n]', ' '
+              if ($l.Trim() -and $i -lt 12) {
+                Write-Output ("::error::" + $l)
+                $i++
+              }
+            }
             exit 1
           }
 
