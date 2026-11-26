@@ -104,10 +104,15 @@ jobs:
           Remove-Item $report -ErrorAction SilentlyContinue
           $sout = Join-Path $env:RUNNER_TEMP "selftest_out.txt"
           $serr = Join-Path $env:RUNNER_TEMP "selftest_err.txt"
-          # PowerShell does NOT wait for GUI-subsystem exes launched with & — use Start-Process -Wait
+          # PowerShell does NOT wait for GUI-subsystem exes launched with & — use Start-Process
           try {
-            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -ArgumentList "--selftest" `
-              -Wait -PassThru -RedirectStandardOutput $sout -RedirectStandardError $serr
+            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -PassThru `
+              -ArgumentList "--selftest" `
+              -RedirectStandardOutput $sout -RedirectStandardError $serr
+            if (-not $proc.WaitForExit(120000)) {
+              try { $proc.Kill() } catch { }
+              Write-Output "::error::selftest timed out after 120s — killed"
+            }
             $code = $proc.ExitCode
           } catch {
             Write-Host "Start-Process failed: $_"
@@ -140,10 +145,16 @@ jobs:
           $outDir = Join-Path $env:RUNNER_TEMP "exe_headless"
           $sout = Join-Path $env:RUNNER_TEMP "headless_out.txt"
           $serr = Join-Path $env:RUNNER_TEMP "headless_err.txt"
+          $report = Join-Path $env:TEMP "drawtostep_ci_report.txt"
+          Remove-Item $report -ErrorAction SilentlyContinue
           try {
-            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -Wait -PassThru `
+            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -PassThru `
               -ArgumentList "--headless","data\examples\flange_shaft_demo.pdf","--out",$outDir `
               -RedirectStandardOutput $sout -RedirectStandardError $serr
+            if (-not $proc.WaitForExit(240000)) {
+              try { $proc.Kill() } catch { }
+              Write-Output "::error::headless timed out after 240s — killed (stage markers below show where it hung)"
+            }
             $code = $proc.ExitCode
           } catch {
             Write-Host "Start-Process failed: $_"
@@ -160,6 +171,12 @@ jobs:
             if (Test-Path $f) {
               Get-Content $f | ForEach-Object { Write-Host $_; if ($i -lt 15) { Emit $_; $i++ } }
             }
+          }
+          Write-Host "===== ci report file (stage markers) ====="
+          if (Test-Path $report) {
+            Get-Content $report | ForEach-Object { Write-Host $_; Emit $_ }
+          } else {
+            Write-Output "::error::no ci report file — hung before python started or before the first marker"
           }
           $step = Join-Path $outDir "flange_shaft_demo.step"
           $stl = Join-Path $outDir "flange_shaft_demo.stl"
@@ -179,8 +196,29 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          & .\dist\DrawToSTEP.exe --screenshot "$env:RUNNER_TEMP\exe_demo.png"
-          if ($LASTEXITCODE -ne 0) { Write-Error "screenshot failed" ; exit 1 }
+          $sout = Join-Path $env:RUNNER_TEMP "shot_out.txt"
+          $serr = Join-Path $env:RUNNER_TEMP "shot_err.txt"
+          $png = Join-Path $env:RUNNER_TEMP "exe_demo.png"
+          try {
+            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -PassThru `
+              -ArgumentList "--screenshot",$png `
+              -RedirectStandardOutput $sout -RedirectStandardError $serr
+            if (-not $proc.WaitForExit(120000)) {
+              try { $proc.Kill() } catch { }
+              Write-Output "::error::screenshot timed out after 120s — killed"
+              exit 1
+            }
+            if ($proc.ExitCode -ne 0) {
+              Write-Output ("::error::screenshot exited with code " + $proc.ExitCode)
+              foreach ($f in @($sout, $serr)) {
+                if (Test-Path $f) { Get-Content $f | ForEach-Object { Write-Host $_ } }
+              }
+              exit 1
+            }
+          } catch {
+            Write-Output ("::error::screenshot Start-Process failed: " + ($_ -replace '%','%25'))
+            exit 1
+          }
 
       - name: Upload artifact
         if: always()   # downloadable even if a smoke step fails — status is in the run log

@@ -133,21 +133,33 @@ def _headless(pdf: Path, out_dir: Path) -> int:
     from core.scan_pipeline import _DEFAULT_DPI, parse_scan, read_dpi
 
     t0 = time.perf_counter()
-    suffix = pdf.suffix.lower()
-    is_scan = suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-    if is_scan:
-        dpi = read_dpi(pdf) or _DEFAULT_DPI
-        linear_tol: float | None = scan_linear_tol_mm(dpi)
-        diameter_tol: float | None = scan_diameter_tol_mm(dpi)
-        drawing = parse_scan(pdf)
-    else:
-        linear_tol = diameter_tol = None
-        drawing = parse_pdf(pdf)
-    dimensions = recognize_dimensions(drawing)
-    profile, contradictions = solve_constraints(dimensions, drawing.profile,
-                                                bore_diameter=drawing.bore_diameter,
-                                                linear_tol_mm=linear_tol,
-                                                diameter_tol_mm=diameter_tol)
+    _ci_report("HEADLESS", f"start {pdf.name}")
+    try:
+        suffix = pdf.suffix.lower()
+        is_scan = suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+        if is_scan:
+            dpi = read_dpi(pdf) or _DEFAULT_DPI
+            linear_tol: float | None = scan_linear_tol_mm(dpi)
+            diameter_tol: float | None = scan_diameter_tol_mm(dpi)
+            drawing = parse_scan(pdf)
+        else:
+            linear_tol = diameter_tol = None
+            drawing = parse_pdf(pdf)
+        _ci_report("HEADLESS", f"parsed: {len(drawing.profile)} profile pts")
+        dimensions = recognize_dimensions(drawing)
+        _ci_report("HEADLESS", f"recognized: {len(dimensions)} dims")
+        profile, contradictions = solve_constraints(dimensions, drawing.profile,
+                                                    bore_diameter=drawing.bore_diameter,
+                                                    linear_tol_mm=linear_tol,
+                                                    diameter_tol_mm=diameter_tol)
+        _ci_report("HEADLESS", f"solved: {len(profile) if profile else 0} profile pts, "
+                               f"{len(contradictions)} contradictions")
+    except BaseException:
+        import traceback
+        tb = traceback.format_exc()
+        _ci_report("HEADLESS FAILED", tb)
+        print(tb, file=sys.stderr)
+        return 1
     if not profile:
         print("ERROR: не удалось распознать профиль детали вращения", file=sys.stderr)
         return 2
@@ -167,17 +179,22 @@ def _headless(pdf: Path, out_dir: Path) -> int:
         print("ERROR: есть противоречия — 3D не собрана", file=sys.stderr)
         return 3
 
+    _ci_report("HEADLESS", "building solid")
     scale = estimate_scale(dimensions, drawing.profile, linear_tol_mm=linear_tol)
     bore_true = drawing.bore_diameter * scale if drawing.bore_diameter else None
     if scale != 1.0:
         print(f"Масштаб чертежа: {scale:.4g}× (геометрия масштабирована к истинным мм)")
     if bore_true:
         print(f"Отверстие: Ø{bore_true:.4g} мм (построено в 3D)")
+    _ci_report("HEADLESS", "build_solid done")
     solid = build_solid(profile, dimensions, bore_diameter=bore_true)
+    _ci_report("HEADLESS", "solid built")
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = pdf.stem
     step_path = export_step(solid, out_dir / f"{stem}.step")
+    _ci_report("HEADLESS", "step exported")
     stl_path = export_stl(solid, out_dir / f"{stem}.stl")
+    _ci_report("HEADLESS", "stl exported")
     elapsed = time.perf_counter() - t0
     print(f"STEP: {step_path}")
     print(f"STL:  {stl_path}")
