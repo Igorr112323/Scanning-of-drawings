@@ -39,8 +39,9 @@ not solids. DrawToSTEP closes that gap for a narrow, well-defined class of parts
 | Экспорт **STEP** (B-rep, открывается в FreeCAD / КОМПАС / SolidWorks) и **STL** | ✅ |
 | UI в стиле iOS (PySide6): Upload → Processing → Verification → 3D Viewer | ✅ |
 | pytest + GitHub Actions | ✅ |
-| Сканы (OpenCV-конвейер реализован, интеграция — v1.1) | ⚠️ базовый код есть, не подключён к UI |
+| Сканы: OpenCV-конвейер (deskew/binarize/векторизация) + локальный RapidOCR, привязка размеров к линиям чертежа | ✅ 10/10 привязано на тестовом скане; неуверенные — кликом по линии |
 | OCR произвольного шрифта (Tesseract) | ⏳ v1.1/Phase 2 |
+| Клик-привязка размера к линии контура («Указать на чертеже») | ✅ неуверенные строки в Verification |
 
 ## Что не входит в MVP / Out of scope (Phase 2, см. Issues)
 
@@ -112,7 +113,7 @@ STEP-файл открывается в FreeCAD и в КОМПАС-3D (Файл 
 ## Тесты / Tests
 
 ```bash
-pytest                      # 22 теста: парсер, солвер, CAD, OCR-правила
+pytest                      # 38 тестов: парсер, солвер, CAD, OCR-правила, привязка размеров на сканах
 ```
 
 CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-прогон примера.
@@ -121,7 +122,7 @@ CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-�
 
 См. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) и [docs/ROADMAP.md](docs/ROADMAP.md).
 Ключевые файлы: `core/pdf_parser.py`, `core/ocr_gost.py`, `core/constraint_solver.py`,
-`core/cad_builder.py`, `app/ui/`.
+`core/cad_builder.py`, `core/scan_pipeline.py`, `core/scan_linking.py`, `app/ui/`.
 
 ## Принципы / Engineering rules
 
@@ -149,7 +150,8 @@ CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-�
   («как влезло») будет определено, но отмечено предупреждением.
 - Сечения/фаски: v1 выдаёт ступенчатое тело вращения; конические фаски из чертежа не восстанавливаются.
 - STEP — B-rep solid, не Feature Tree. Редактирование истории построения — задача CAD-пакета пользователя.
-- Сканы: OpenCV-конвейер (deskew/binarize/векторизация) + локальный RapidOCR работают; на синтетическом скане shaft-примера восстановлено тело с точностью < 1% по объёму. Слабое звено — привязка размерных линий к контуру на шуме, размеры с чертежа часто остаются в статусе «требуют подтверждения». Промышленный конвейер — Phase 2.
+- Сканы: OpenCV-конвейер (deskew/binarize/векторизация) + локальный RapidOCR работают; на синтетическом скане shaft-примера восстановлено тело с точностью **+0.26 % по объёму** (обе фаски 2×45° и отверстие Ø12.19 учтены). Привязка размеров: **10/10 авто-привязано**, но 4 диаметра (RapidOCR теряет символ Ø и пишет ведущий ноль: `060`, `012`…) приходят с уверенностью 0.80 и **всегда подтверждаются в UI кликом «Указать на чертеже»** по размерной линии — неуверенные размеры никогда не применяются молча. Качество OCR на шумных сканах не промышленное — Phase 2.
+- Проверка линейных размеров по скану использует толеранс по пикселизации (`max(0.05, 24 px)` ≈ 3 мм при 200 DPI) — растр «съедает» концы штрихов (~10 px на сторону); PDF-чертежи по-прежнему проверяются с 0.05 мм.
 
 ## Структура репозитория / Repository layout
 
@@ -172,4 +174,6 @@ docs/       ARCHITECTURE.md, ROADMAP.md, BENCHMARK.md
 *English summary:* DrawToSTEP parses a vector GOST/ESKD drawing of an axisymmetric part (shaft/flange/bushing/ring),
 recognizes dimensions (Ø/R/M/linear), cross-checks them against the reconstructed profile with GOST scale inference,
 requires explicit human confirmation of anything uncertain, revolves the confirmed profile with CadQuery/OpenCASCADE,
-and exports STEP/STL. Fully offline; no dimension is ever invented; unconfirmed dimensions block export.
+and exports STEP/STL. Scans (PNG/JPG/TIFF/BMP) run the same pipeline — OpenCV deskew/binarization, vectorization and
+local RapidOCR — with dimensions that OCR cannot read confirmed by clicking «Указать на чертеже» (click-to-link).
+Fully offline; no dimension is ever invented; unconfirmed dimensions block export.

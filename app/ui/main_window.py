@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QClipboard
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,10 +41,47 @@ from core.cad_builder import build_solid, export_step, export_stl
 from core.constraint_solver import estimate_scale, solve_constraints
 from core.ocr_gost import recognize_dimensions
 from core.pdf_parser import parse_pdf
-from core.scan_preprocess import preprocess_scan
-from core.vectorize import vectorize
+from core.constraint_solver import scan_diameter_tol_mm, scan_linear_tol_mm
+from core.scan_pipeline import _DEFAULT_DPI, parse_scan, read_dpi
 
 _EXPORT_DIR = Path("exports")
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
+
+class ScanWorker(QThread):
+    """Runs the scan pipeline (~6 s of RapidOCR) off the UI thread."""
+
+    done = Signal(object)   # dict compatible with MainWindow._pipeline_result
+    failed = Signal(str)
+
+    def __init__(self, path: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._path = path
+
+    def run(self) -> None:
+        t0 = time.perf_counter()
+        try:
+            dpi = read_dpi(self._path) or _DEFAULT_DPI
+            linear_tol = scan_linear_tol_mm(dpi)
+            diameter_tol = scan_diameter_tol_mm(dpi)
+            drawing = parse_scan(self._path)
+            dimensions = recognize_dimensions(drawing)
+            scaled_profile, contradictions = solve_constraints(
+                dimensions, drawing.profile, bore_diameter=drawing.bore_diameter,
+                linear_tol_mm=linear_tol, diameter_tol_mm=diameter_tol)
+            self.done.emit({
+                "file_path": self._path,
+                "drawing": drawing,
+                "scale": estimate_scale(dimensions, drawing.profile,
+                                        linear_tol_mm=linear_tol),
+                "bore_diameter": drawing.bore_diameter,
+                "dimensions": dimensions,
+                "profile": scaled_profile if scaled_profile else drawing.profile,
+                "contradictions": contradictions,
+                "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
+            })
+        except Exception as exc:  # surfaced to the user, never swallowed
+            self.failed.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -148,8 +185,8 @@ class MainWindow(QMainWindow):
         self.viewer_screen.export_stl.connect(lambda: self._export("stl"))
         self.viewer_screen.new_drawing.connect(self._reset_to_upload)
 
-        # scan (raster) support is v1.1 — for now only vector PDFs take this path
-        self._tif_note_shown = False
+        self._scan_worker: ScanWorker | None = None
+        self._scan_nav_pending = False
 
         self._go_to("upload")
 
@@ -248,14 +285,23 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------- pipeline
     def _on_file_selected(self, path: str) -> None:
         suffix = Path(path).suffix.lower()
+        if suffix in _IMAGE_SUFFIXES:
+            if self._scan_worker is not None:
+                QMessageBox.information(self, "Подождите", "Скан ещё обрабатывается.")
+                return
+            self._pipeline_result = {}
+            self._scan_nav_pending = False
+            self.processing_screen.start(Path(path).name)
+            self._go_to("processing")
+            self._scan_worker = ScanWorker(path, self)
+            self._scan_worker.done.connect(self._on_scan_ready)
+            self._scan_worker.failed.connect(self._on_scan_failed)
+            self._scan_worker.start()
+            return
         if suffix != ".pdf":
-            if not self._tif_note_shown:
-                self._tif_note_shown = True
-                QMessageBox.information(
-                    self, "Сканы — v1.1",
-                    "Растровые сканы откроются в v1.1 (OpenCV-конвейер готов, OCR-обвязка в процессе).\n"
-                    "Сейчас поддерживается векторный PDF из КОМПАС / AutoCAD.",
-                )
+            QMessageBox.warning(self, "Формат не поддерживается",
+                                f"Неподдерживаемое расширение: {suffix or '(без расширения)'}\n"
+                                "Ожидается PDF (КОМПАС / AutoCAD) или изображение скана.")
             return
 
         t0 = time.perf_counter()
@@ -285,7 +331,26 @@ class MainWindow(QMainWindow):
         self._go_to("processing")
 
     def _on_processing_done(self) -> None:
+        if self._scan_worker is not None:
+            # OCR is still running — navigate when the worker finishes
+            self._scan_nav_pending = True
+            return
         self._go_to("verification")
+
+    def _on_scan_ready(self, result: dict) -> None:
+        self._pipeline_result = result
+        self._scan_worker = None
+        self.verification_screen.set_data(result["drawing"], result["dimensions"],
+                                          result["contradictions"])
+        if self._scan_nav_pending or self.stack.currentIndex() == self._SCREENS["processing"]:
+            self._go_to("verification")
+        self._scan_nav_pending = False
+
+    def _on_scan_failed(self, message: str) -> None:
+        self._scan_worker = None
+        self._scan_nav_pending = False
+        QMessageBox.critical(self, "Не удалось разобрать скан", message)
+        self._go_to("upload")
 
     def _on_build_requested(self, confirmed_dimensions) -> None:
         profile = self._pipeline_result.get("profile") or []

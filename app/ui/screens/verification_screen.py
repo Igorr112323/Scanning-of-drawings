@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QRectF, QSize
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QKeyEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -29,12 +29,19 @@ from app.ui.widgets.icons import icon_check, icon_warn
 
 from core.models import CONFIDENCE_THRESHOLD, Dimension, Symbol
 from core.ocr_gost import parse_dimension_text
+from core.scan_linking import confirm_dimension_link, nearest_vector_element
 
 
 # ---------------------------------------------------------------- preview ----
 
-def render_drawing_preview(source_path: str, dimensions: list[Dimension]) -> QPixmap:
-    """Render the sheet to a pixmap; uncertain dimensions get a yellow halo."""
+def render_drawing_preview(source_path: str, dimensions: list[Dimension],
+                           marks: list[tuple[float, float]] | None = None,
+                           mm_per_px: float = 25.4 / 150.0) -> QPixmap:
+    """Render the sheet to a pixmap; uncertain dimensions get a yellow halo.
+
+    ``marks`` are drawing coordinates (mm) of manually linked dimensions;
+    ``mm_per_px`` converts them back to image pixels for the overlay.
+    """
     path = Path(source_path)
     highlights: list[tuple[float, float, float, float]] = []  # px rects (x, y, w, h)
     px_per_mm = 150.0 / 25.4
@@ -80,13 +87,39 @@ def render_drawing_preview(source_path: str, dimensions: list[Dimension]) -> QPi
             painter.setPen(QPen(QColor("#E0A800"), 2.4))
             painter.drawRoundedRect(QRectF(x, y, w, h), 6, 6)
         painter.end()
+    if marks:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        for mx, my in marks:
+            px, py = mx / mm_per_px, my / mm_per_px
+            painter.setPen(QPen(QColor("#34C759"), 3.0))
+            painter.setBrush(QColor(52, 199, 89, 60))
+            painter.drawEllipse(QRectF(px - 16, py - 16, 32, 32))
+            painter.drawEllipse(QRectF(px - 3.5, py - 3.5, 7, 7))
+        painter.end()
     return pixmap
+
+
+class PreviewLabel(QLabel):
+    """Drawing preview that reports raw clicks in label coordinates."""
+
+    clicked = Signal(QPoint)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCursor(Qt.ArrowCursor)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(event.position().toPoint())
+        super().mousePressEvent(event)
 
 
 # ---------------------------------------------------------------- rows -------
 
 class DimensionRow(QFrame):
     confirm_toggled = Signal()
+    link_toggled = Signal(object)  # emits self — screen manages single active link mode
 
     def __init__(self, dim: Dimension, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -120,14 +153,28 @@ class DimensionRow(QFrame):
         self.confirm_btn.setCursor(Qt.PointingHandCursor)
         self.confirm_btn.setFixedHeight(34)
 
+        self.link_btn = QPushButton("Указать на чертеже")
+        self.link_btn.setCursor(Qt.PointingHandCursor)
+        self.link_btn.setFixedHeight(34)
+        self.link_btn.setToolTip("Режим привязки: кликните по линии на чертеже")
+        self._manually_linked = False
+        self.link_btn.setVisible(self.dim.is_uncertain)
+
         layout.addWidget(self.icon)
         layout.addLayout(middle, 1)
         layout.addWidget(self.editor)
+        layout.addWidget(self.link_btn)
         layout.addWidget(self.confirm_btn)
 
+        # clicking the row background (not its buttons) toggles link mode
+        for w in (self.icon, self.title, self.caption):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self._link_mode = False
         self._paint_state()
         self.confirm_btn.clicked.connect(self.toggle_confirm)
         self.editor.textChanged.connect(self._on_edit)
+        self.link_btn.clicked.connect(self._toggle_link_mode)
 
     # ---------------------------------------------------------------------
     def _paint_state(self):
@@ -147,7 +194,8 @@ class DimensionRow(QFrame):
             self.setStyleSheet("DimensionRow { background: #FFFFFF; border-radius: 18px; border: 1px solid rgba(0,0,0,0.05); }")
             self.icon.setPixmap(icon_check().pixmap(22, 22))
             self.title.setText(dim.label())
-            self.caption.setText(f"уверенность {dim.confidence:.2f} · привязка: {dim.linked_element_id or '—'}")
+            tag = " · вручную" if self._manually_linked else ""
+            self.caption.setText(f"уверенность {dim.confidence:.2f} · привязка: {dim.linked_element_id or '—'}{tag}")
             self.editor.setVisible(False)
             self.confirm_btn.setVisible(False)
         self._update_confirm_button()
@@ -193,6 +241,52 @@ class DimensionRow(QFrame):
         self.confirm_toggled.emit()
 
 
+    def _link_allowed(self) -> bool:
+        return self.dim.is_uncertain or self._manually_linked
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if self._link_allowed() and event.button() == Qt.LeftButton:
+            self._toggle_link_mode()
+            return
+        super().mousePressEvent(event)
+
+    def _toggle_link_mode(self) -> None:
+        if not self._link_allowed():
+            return
+        self.link_toggled.emit(self)
+
+    def enter_link_mode(self) -> None:
+        self._link_mode = True
+        self.setStyleSheet("DimensionRow { background: #EAF2FF; border-radius: 18px; border: 2px solid #0A84FF; }")
+        self.link_btn.setText("Отмена привязки")
+        self.link_btn.setStyleSheet(f"background: #0A84FF; color: white; border-radius: 14px; padding: 0 12px; font-weight: 700; font-size: 12px;")
+        self.caption.setText("Кликните по линии на чертеже — Esc отменяет")
+
+    def exit_link_mode(self) -> None:
+        self._link_mode = False
+        self.link_btn.setText("Перепривязать" if self._manually_linked else "Указать на чертеже")
+        self.link_btn.setStyleSheet("")
+        self._paint_state()
+
+    def link_to(self, element_id: str) -> None:
+        """Bind this dimension to a drawing element (manual click-to-link)."""
+        self.dim = confirm_dimension_link(self.dim, element_id)
+        self._confirmed = True
+        self._link_mode = False
+        self._manually_linked = True
+        self.link_btn.setText("Перепривязать")
+        self.link_btn.setVisible(True)
+        self._paint_state()
+        self.confirm_toggled.emit()
+
+    def is_link_mode(self) -> bool:
+        return self._link_mode
+
+    def current_anchor_px(self, mm_per_px: float) -> tuple[float, float] | None:
+        if self.dim.anchor is None:
+            return None
+        return (self.dim.anchor[0] / mm_per_px, self.dim.anchor[1] / mm_per_px)
+
     def is_confirmed(self) -> bool:
         return self._confirmed
 
@@ -220,12 +314,18 @@ class VerificationScreen(QWidget):
         pl.setSpacing(8)
         preview_title = QLabel("Чертёж")
         preview_title.setObjectName("CardTitle")
-        self.preview = QLabel()
+        self.preview = PreviewLabel()
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setStyleSheet("background: #FAFAFC; border-radius: 16px;")
         self.preview.setMinimumSize(QSize(380, 320))
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.preview.clicked.connect(self._on_preview_clicked)
+        self.link_hint = QLabel("Режим привязки — кликните по линии на чертеже · Esc отменяет")
+        self.link_hint.setStyleSheet("background: #EAF2FF; color: #0A84FF; border-radius: 12px; padding: 8px 12px; font-size: 12px; font-weight: 600;")
+        self.link_hint.setVisible(False)
+        self.link_hint.setWordWrap(True)
         pl.addWidget(preview_title)
+        pl.addWidget(self.link_hint)
         pl.addWidget(self.preview, 1)
 
         # ---------------- right: dimensions list
@@ -275,14 +375,26 @@ class VerificationScreen(QWidget):
         self.rows: list[DimensionRow] = []
         self._contradictions: list[tuple[str, str]] = []  # (severity, message)
         self._source_path: str = ""
+        self._drawing = None
+        self._mm_per_px: float = 25.4 / 150.0
+        self._marks: list[tuple[float, float]] = []  # mm coords of manually linked dims
+        self._linking_row: DimensionRow | None = None
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.installEventFilter(self)
 
     # ------------------------------------------------------------------
     def set_data(self, drawing, dimensions: list[Dimension], contradictions=()) -> None:
         self._source_path = drawing.source_path
         self._contradictions = [(c.severity, c.message) for c in contradictions]
+        self._drawing = drawing
+        self._exit_link_mode()
+        self._marks = []
+        self._dimensions = list(dimensions)
 
-        pixmap = render_drawing_preview(drawing.source_path, dimensions)
-        self._preview_pixmap = pixmap
+        # one render to measure the image plane
+        probe = render_drawing_preview(drawing.source_path, dimensions)
+        if probe is not None and not probe.isNull():
+            self._mm_per_px = drawing.page_width / max(1, probe.width())
         self._refresh_preview()
 
         # rebuild rows
@@ -294,11 +406,13 @@ class VerificationScreen(QWidget):
         insert_at = 0
         for dim in dimensions:
             row = DimensionRow(dim)
-            row.confirm_toggled.connect(self._refresh_cta)
+            row.confirm_toggled.connect(self._on_row_confirmed)
+            row.link_toggled.connect(self._on_row_link_toggled)
             self.list_layout.insertWidget(insert_at, row)
             self.rows.append(row)
             insert_at += 1
 
+        self._dimensions = list(dimensions)
         self._refresh_banner()
         self._refresh_cta()
 
@@ -307,9 +421,12 @@ class VerificationScreen(QWidget):
         self._refresh_preview()
 
     def _refresh_preview(self) -> None:
-        pixmap = getattr(self, "_preview_pixmap", None)
-        if pixmap is None:
+        if not self._source_path:
             return
+        pixmap = render_drawing_preview(self._source_path,
+                                         getattr(self, "_dimensions", []),
+                                         marks=self._marks, mm_per_px=self._mm_per_px)
+        self._preview_pixmap = pixmap
         target = self.preview.size()
         scaled = pixmap.scaled(target.width() - 8, target.height() - 8,
                                Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -339,8 +456,79 @@ class VerificationScreen(QWidget):
             else (f"Осталось подтвердить: {unconfirmed}" if not has_errors else "Исправь противоречия выше")
         )
 
+    def _on_row_confirmed(self) -> None:
+        self._dimensions = self.dimensions()
+        self._refresh_preview()
+        self._refresh_cta()
+
+    # ------------------------------------------------- click-to-link ----
+    def _on_row_link_toggled(self, row: DimensionRow) -> None:
+        if self._linking_row is row:
+            self._exit_link_mode()
+            return
+        self._exit_link_mode()
+        self._linking_row = row
+        row.enter_link_mode()
+        self.link_hint.setVisible(True)
+        self.preview.setCursor(Qt.CrossCursor)
+
+    def _exit_link_mode(self) -> None:
+        if self._linking_row is not None:
+            self._linking_row.exit_link_mode()
+        self._linking_row = None
+        self.link_hint.setVisible(False)
+        self.preview.setCursor(Qt.ArrowCursor)
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if event.type() == QKeyEvent.KeyPress and event.key() == Qt.Key_Escape:
+            self._exit_link_mode()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _preview_px_to_mm(self, pos: QPoint) -> tuple[float, float] | None:
+        pixmap = getattr(self, "_preview_pixmap", None)
+        if pixmap is None or pixmap.isNull():
+            return None
+        target = self.preview.size()
+        scaled = pixmap.size().scaled(target.width() - 8, target.height() - 8,
+                                      Qt.KeepAspectRatio)
+        ox = (target.width() - scaled.width()) / 2.0
+        oy = (target.height() - scaled.height()) / 2.0
+        x = pos.x() - ox
+        y = pos.y() - oy
+        if x < 0 or y < 0 or x > scaled.width() or y > scaled.height():
+            return None
+        scale = pixmap.width() / max(1, scaled.width())
+        px = x * scale
+        py = y * scale
+        return (px * self._mm_per_px, py * self._mm_per_px)
+
+    def _on_preview_clicked(self, pos: QPoint) -> None:
+        row = self._linking_row
+        if row is None:
+            return
+        point = self._preview_px_to_mm(pos)
+        if point is None:
+            return
+        elements = getattr(self._drawing, "elements", []) if self._drawing else []
+        target = nearest_vector_element(elements, point[0], point[1], max_dist=15.0)
+        if target is None:
+            row.caption.setText("Слишком далеко от контура (лимит 15 мм) — кликните точнее")
+            row.caption.setStyleSheet(f"font-size: 11px; color: {RED}; font-weight: 600;")
+            return
+        row.caption.setStyleSheet(f"font-size: 11px; color: {SECONDARY};")
+        self._marks.append(point)
+        row.link_to(target.id)
+        self._exit_link_mode()
+        self._dimensions = self.dimensions()
+        self._refresh_preview()
+        self._refresh_cta()
+
     def _emit_build(self) -> None:
         self.build_requested.emit([row.current_dimension() for row in self.rows])
 
     def dimensions(self) -> list[Dimension]:
-        return [row.current_dimension() for row in self.rows]
+        rows = getattr(self, "rows", [])
+        if rows:
+            return [row.current_dimension() for row in rows]
+        return list(getattr(self, "_dimensions", []))

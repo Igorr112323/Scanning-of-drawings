@@ -34,6 +34,16 @@ from core.models import (
 _DIAMETER_TOL_MM = 0.05
 _LINEAR_TOL_MM = 0.05
 
+# Raster sources (200 DPI scans) erode stroke endpoints symmetric to the tips
+# by ~10 px and wobble junctions by a few px; 0.05 mm is unattainable there.
+# Callers pass an explicit tolerance derived from the pixel size instead.
+def scan_linear_tol_mm(dpi: float) -> float:
+    return max(_LINEAR_TOL_MM, 24.0 * 25.4 / dpi)
+
+
+def scan_diameter_tol_mm(dpi: float) -> float:
+    return max(_DIAMETER_TOL_MM, 4.0 * 25.4 / dpi)
+
 
 def _feature_diameters(profile: list[ProfilePoint]) -> list[float]:
     radii = sorted({round(p.r, 6) for p in profile if p.r > 0.0})
@@ -62,7 +72,8 @@ _GOST_SCALES = [0.02, 0.025, 0.04, 0.05, 0.0667, 0.1, 0.2, 0.25, 0.4, 0.5,
                 2.0, 2.5, 4.0, 5.0, 10.0, 15.0, 20.0, 25.0, 40.0, 50.0]
 
 
-def estimate_scale(dimensions: list[Dimension], profile: list[ProfilePoint]) -> float:
+def estimate_scale(dimensions: list[Dimension], profile: list[ProfilePoint],
+                   linear_tol_mm: float | None = None) -> float:
     """Pick the GOST scale that satisfies the most dimensions (1.0 on ties).
 
     Public so callers can convert as-drawn geometry (or bore) to true
@@ -74,14 +85,16 @@ def estimate_scale(dimensions: list[Dimension], profile: list[ProfilePoint]) -> 
     dimensions = [d for d in dimensions if not d.is_uncertain]
     if not dimensions or not profile:
         return 1.0
-    scale = _best_scale(dimensions, profile)
+    scale = _best_scale(dimensions, profile, linear_tol_mm)
     if not math.isfinite(scale) or scale <= 0:
         return 1.0
     return min(max(scale, 0.05), 20.0)
 
 
-def _best_scale(dimensions: list[Dimension], profile: list[ProfilePoint]) -> float:
+def _best_scale(dimensions: list[Dimension], profile: list[ProfilePoint],
+                linear_tol_mm: float | None = None) -> float:
     """Raw vote (unclamped) — see ``estimate_scale`` for the guarded wrapper."""
+    lin_tol = _LINEAR_TOL_MM if linear_tol_mm is None else linear_tol_mm
     diameters = _feature_diameters(profile)
     widths = _feature_widths(profile)  # step widths + overall length
     diameter_dims = [d for d in dimensions if d.symbol is Symbol.DIAMETER]
@@ -94,7 +107,7 @@ def _best_scale(dimensions: list[Dimension], profile: list[ProfilePoint]) -> flo
                     _DIAMETER_TOL_MM, 0.001 * d.value):
                 v += 1
         for d in linear_dims:
-            if widths and min(abs(scale * w - d.value) for w in widths) <= _LINEAR_TOL_MM:
+            if widths and min(abs(scale * w - d.value) for w in widths) <= lin_tol:
                 v += 1
         return v
 
@@ -107,8 +120,16 @@ def solve_constraints(
     dimensions: list[Dimension],
     profile: list[ProfilePoint],
     bore_diameter: float | None = None,
+    linear_tol_mm: float | None = None,
+    diameter_tol_mm: float | None = None,
 ) -> tuple[list[ProfilePoint], list[Contradiction]]:
     """Verify dimensions against the profile; return (scaled_profile, contradictions).
+
+    Tolerances default to 0.05 mm — appropriate for vector PDFs. Raster scans
+    must pass ``linear_tol_mm``/``diameter_tol_mm`` derived from the pixel size
+    (see ``scan_linear_tol_mm`` / ``scan_diameter_tol_mm``): binarisation erodes
+    stroke endpoints by ~10 px per side, so absolute sub-pixel checks would
+    block every otherwise-correct scan.
 
     ``scaled_profile`` is the profile converted to true millimetres (identity
     when the drawing is plotted 1:1). The returned profile is always a copy —
@@ -137,7 +158,10 @@ def solve_constraints(
                 dimension_ids=[d.id], severity="warning",
             ))
 
-    scale = estimate_scale(usable, profile)
+    lin_tol = _LINEAR_TOL_MM if linear_tol_mm is None else linear_tol_mm
+    dia_tol = _DIAMETER_TOL_MM if diameter_tol_mm is None else diameter_tol_mm
+
+    scale = estimate_scale(usable, profile, linear_tol_mm=lin_tol)
 
     scaled = [ProfilePoint(p.x * scale, p.r * scale) for p in profile]
 
@@ -158,7 +182,7 @@ def solve_constraints(
                     dimension_ids=[dim.id], severity="error"))
                 continue
             nearest = min(feature_d, key=lambda f: abs(target - f))
-            if abs(target - nearest) > max(_DIAMETER_TOL_MM, 0.001 * dim.value):
+            if abs(target - nearest) > max(dia_tol, 0.001 * dim.value):
                 contradictions.append(Contradiction(
                     message=(f"Размер {dim.raw_text!r} = {dim.value:g} мм не совпадает "
                              f"ни с одной поверхностью вращения (ближайшая Ø{nearest:g} мм)"),
@@ -170,14 +194,14 @@ def solve_constraints(
                     dimension_ids=[dim.id], severity="error"))
                 continue
             nearest = min(feature_r, key=lambda f: abs(dim.value - f))
-            if abs(dim.value - nearest) > max(_DIAMETER_TOL_MM, 0.001 * dim.value):
+            if abs(dim.value - nearest) > max(dia_tol, 0.001 * dim.value):
                 contradictions.append(Contradiction(
                     message=(f"Размер {dim.raw_text!r} = R{dim.value:g} мм не совпадает "
                              f"ни с одним радиусом детали (ближайший R{nearest:g} мм)"),
                     dimension_ids=[dim.id], severity="error"))
         elif dim.symbol is Symbol.LINEAR:
             candidates = feature_w + [total_length]
-            if not candidates or min(abs(dim.value - c) for c in candidates) > _LINEAR_TOL_MM:
+            if not candidates or min(abs(dim.value - c) for c in candidates) > lin_tol:
                 contradictions.append(Contradiction(
                     message=(f"Линейный размер {dim.raw_text!r} = {dim.value:g} мм "
                              f"не связан ни с габаритом, ни со ступенями детали"),
@@ -185,7 +209,7 @@ def solve_constraints(
         # CHAMFER and THREAD dimensions are consumed by the builder (45° end
         # chamfers / thread modelling is out of v1 scope) — skipped here.
 
-    contradictions.extend(_check_chain_sum(usable, feature_w, total_length))
+    contradictions.extend(_check_chain_sum(usable, feature_w, total_length, lin_tol))
 
     return scaled, contradictions
 
@@ -194,6 +218,7 @@ def _check_chain_sum(
     dimensions: list[Dimension],
     step_widths: list[float],
     total_length: float,
+    linear_tol_mm: float = _LINEAR_TOL_MM,
 ) -> list[Contradiction]:
     """Consistency rule for bodies of revolution: the length dimensions that
     match individual step widths partition the overall length, so they must
@@ -205,9 +230,9 @@ def _check_chain_sum(
         return []
 
     def matches_any(d: Dimension, candidates: list[float]) -> bool:
-        return any(abs(d.value - c) <= _LINEAR_TOL_MM for c in candidates)
+        return any(abs(d.value - c) <= linear_tol_mm for c in candidates)
 
-    overall_dims = [d for d in linear if abs(d.value - total_length) <= _LINEAR_TOL_MM]
+    overall_dims = [d for d in linear if abs(d.value - total_length) <= linear_tol_mm]
     chain_dims = [d for d in linear if matches_any(d, step_widths) and d not in overall_dims]
     if not chain_dims:
         return []
@@ -221,7 +246,7 @@ def _check_chain_sum(
         largest = max(linear, key=lambda d: d.value)
         overall_value, overall_id = largest.value, largest.id
 
-    if abs(chain_sum - overall_value) > _LINEAR_TOL_MM:
+    if abs(chain_sum - overall_value) > linear_tol_mm:
         return [Contradiction(
             message=f"Противоречие: сумма участков {chain_sum:g} ≠ общая длина {overall_value:g}",
             dimension_ids=[d.id for d in chain_dims] + [overall_id],

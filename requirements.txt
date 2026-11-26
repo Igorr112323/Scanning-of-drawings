@@ -12,3 +12,9 @@ pytesseract>=0.3.10    # OCR fallback to system Tesseract (RapidOCR above is pre
 
 # Tests
 pytest>=8.0,<9.0
+
+# Example generators (data/examples/real — reproducible benchmark assets,
+# see docs/BENCHMARK.md). Not imported by the pipeline itself.
+matplotlib>=3.8,<4.0
+reportlab>=4.0,<6.0
+Pillow>=10.0,<12.0

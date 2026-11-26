@@ -37,6 +37,61 @@
 
 `models.py` holds the dataclasses; nothing else carries state between stages.
 
+## Scan path (Phase 1.1 · implemented)
+
+```
+scan_test.png ─► scan_preprocess ─► vectorize ─► ocr_words (RapidOCR, full image)
+                     │                  │            (3×-upscaled crops were
+                     │                  │             measured to misread more —
+                     │                  │             see docs/BENCHMARK.md)
+                 binarized          elements      texts
+                              │
+                              ▼
+        scan_linking.reclassify_thin_strokes   (thin 2-pt strokes whose
+                              │                 cross-width collapses AND that
+                              │                 align with an OCR text anchor
+                              │                 → DIMENSION_LINE; CONTOUR and
+                              │                 AXIS never reclassified)
+                              ▼
+             recognize_dimensions ─► constraint_solver ─► build_solid
+```
+
+1. **Reclassification (mandatory).** Strokes reclassified to `DIMENSION_LINE` must be
+   thin (≤ 6 px at 200 DPI), non-horizontal or collinear with a text anchor, and pass a
+   min-of-5 thickness probe (min over endpoint probes, not the junction-inflated mean).
+   Thick revolution outlines are never reclassified — they stay `CONTOUR`; the centerline
+   stays `AXIS`.
+2. **OCR → dimension** is the same regex fallback as the PDF path; unparseable texts are
+   reported as uncertain (value 0.0), never dropped.
+3. **Linking is per OCR text**, not per stroke: anchor = text bbox centre.
+   - DIAMETER: rank candidates by |dx| primarily (Ø leaders are vertical);
+     zero-led RapidOCR misreads (`060` → `Ø60`) are confidence-capped at 0.80 when
+     linked — never auto-applied, always shown for confirmation.
+   - LINEAR chain dimensions: horizontal same-row `DIMENSION_LINE` fragments are merged
+     into logical row intervals, cut at the midpoints between consecutive text centres
+     (`#seg0`, `#seg1`, …). Each chain dim links to its own segment
+     (80/60/100 → `#seg0…#seg2`), not to the whole stroke or to a neighbour's segment.
+   - LINEAR far links (> 5 mm) with `arrow_end=True` score 0.95, else 0.90.
+4. **Click-to-link (mandatory human-in-the-loop).** In the verification screen every
+   uncertain row offers «Указать на чертеже»: the preview switches to crosshair mode and
+   the user clicks the intended stroke. `core.scan_linking.nearest_vector_element`
+   (point → nearest stroked `VectorElement`, max radius 15 mm, TEXT ignored) picks the
+   element; `confirm_dimension_link` flips the row to confidence 1.0 / linked /
+   not-uncertain. A green mark is drawn on the preview; `Esc` cancels; «Перепривязать»
+   re-enters link mode to fix a wrong pick. «Подтвердить и собрать 3D» stays disabled
+   until every dimension is auto-linked with confidence ≥ 0.85, manually linked, or
+   explicitly confirmed — the gate itself is unchanged.
+5. **Scan solver tolerance.** Vector PDFs verify at 0.05 mm; raster scans pass
+   pixel-derived overrides (`scan_linear_tol_mm` = max(0.05, 24 px), ≈3 mm at 200 DPI;
+   `scan_diameter_tol_mm` = max(0.05, 4 px), ≈0.51 mm) because binarisation erodes stroke
+   endpoints ~10 px per side. Diameters on scans are all uncertain (zero-led OCR) and are
+   excluded from solving; LINEARs are then checked with the widened tolerance — zero
+   blocking contradictions on the reference scan.
+6. **Scans in the app.** Dropping a `.png/.jpg/.tif/.bmp` on the upload area runs the
+   scan pipeline in a `QThread` (`ScanWorker`) while the Processing screen animates; the
+   Verification screen is populated only when OCR finishes (never half-filled). The headless
+   entry point accepts the same files (`--headless scan_test.png`) with the same tolerances.
+
 ## How the v1 parser works
 
 1. `page.get_drawings()` → every stroked path with width + dash pattern.
@@ -83,9 +138,11 @@ it shows exactly the exported geometry and needs no OpenGL.
 | Situation | Behaviour |
 |---|---|
 | PDF has no axis / not a body of revolution | empty profile → error surfaced, no 3D |
+| Ø read with dropped leading zero/glyph (060, 012…) | linked, confidence capped at 0.80 → always shown for confirmation |
 | Dimension unparseable | yellow row, value editable, 3D blocked |
+| Dimension linked to the wrong stroke by the user | undo: click «Указать на чертеже» again and pick the right one |
 | Contradictory diameters | red banner, 3D blocked, nothing silently "fixed" |
-| Scanned image opened | friendly v1.1 notice (OpenCV path not wired yet) |
+| Scanned image opened | OpenCV pipeline runs end-to-end (preprocess → vectorize → OCR → link) |
 | Libre/duplicate chain dims | both reported; solver validates each |
 
 ## Performance

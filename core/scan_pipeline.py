@@ -4,7 +4,8 @@ Used for scanned ESKD sheets (clean scans only — no photos of paper). Steps:
 
     cv2.imread → preprocess_scan (deskew/denoise/binarize)
               → vectorize (CONTOUR / DIMENSION_LINE / AXIS / HATCH by stroke width & pattern)
-              → ocr_words (local Tesseract, GOST whitelist)
+              → ocr_words (local RapidOCR, ONNX — offline)
+              → thin-stroke reclassification (core/scan_linking.py)
               → mm normalization (DPI from file metadata, default 200 DPI)
               → extract_revolution → Drawing
 
@@ -27,6 +28,7 @@ import numpy as np
 from core.geometry import extract_revolution
 from core.models import Drawing, ElementType, VectorElement
 from core.ocr_gost import ocr_words
+from core.scan_linking import reclassify_scan_elements
 from core.scan_preprocess import preprocess_scan
 from core.vectorize import vectorize
 
@@ -58,6 +60,7 @@ def _scale_elements(elements: list[VectorElement], factor: float) -> list[Vector
             id=e.id, type=e.type, points=pts,
             stroke_width=e.stroke_width * factor, dash=e.dash,
             text=e.text, bbox=bbox, ocr_confidence=e.ocr_confidence,
+            arrow_end=e.arrow_end,
         ))
     return out
 
@@ -72,10 +75,16 @@ def build_drawing_from_arrays(
 ) -> Drawing:
     """Shared core of the scan path, kept separate for tests (synthetic scans)."""
     mm_per_px = _MM_PER_INCH / dpi
-    elements = _scale_elements(vectorize(cleaned), mm_per_px)
+    elements = vectorize(cleaned)
     if ocr:
-        words = _scale_elements(ocr_words(cleaned), mm_per_px)
+        words = ocr_words(cleaned)
         boxes = [w.bbox for w in words if w.bbox]
+        # thin strokes attached to dimension callouts are DIMENSION_LINEs,
+        # not part outline (see core/scan_linking.py and docs/ARCHITECTURE.md)
+        elements = reclassify_scan_elements(elements, boxes, cleaned=cleaned)
+        elements = _scale_elements(elements, mm_per_px)
+        words = _scale_elements(words, mm_per_px)
+        boxes = [w.bbox for w in words if w.bbox]  # mm space from here on
         if boxes:
             pad = 1.0  # mm — text ink extends past OCRed word boxes
 
@@ -84,30 +93,6 @@ def build_drawing_from_arrays(
                 dx = max(x0 - x, 0.0, x - x1)
                 dy = max(y0 - y, 0.0, y - y1)
                 return max(dx, dy)
-
-            def _is_diagonal(e) -> bool:
-                (x0, y0), (x1, y1) = e.points
-                sx, sy = abs(x1 - x0), abs(y1 - y0)
-                span = max(sx, sy)
-                if span <= 0.0:
-                    return False
-                # axis-parallel outline strokes are safe; only diagonals
-                # (10°..80°) can be leaders
-                return min(sx, sy) / span > 0.18
-
-            def _leader_stroke(e) -> bool:
-                """A diagonal stroke attached to a word box is its callout
-                leader — glyphs sit inside the box, the leader touches it;
-                the part outline never terminates on a text box."""
-                if e.type is ElementType.AXIS or len(e.points) != 2:
-                    return False
-                if not _is_diagonal(e):
-                    return False
-                return any(
-                    _rect_distance(p[0], p[1], b) <= pad
-                    for p in e.points
-                    for b in boxes
-                )
 
             def _glyph_stroke(e) -> bool:
                 """A stroke that is mostly INSIDE a word's box is glyph mass.
@@ -138,10 +123,14 @@ def build_drawing_from_arrays(
                         return True
                 return False
 
-            # glyph pixels for OCR'd words are text, not geometry; callout
-            # leaders are text attachments, not part outline either
-            elements = [e for e in elements if not _glyph_stroke(e) and not _leader_stroke(e)]
+            # glyph pixels for OCR'd words are text, not geometry
+            # (callout leaders are DIMENSION_LINEs — ignored by the geometry
+            # extractor and kept for dimension linking)
+            elements = [e for e in elements if not _glyph_stroke(e)]
         elements.extend(words)
+
+    else:
+        elements = _scale_elements(elements, mm_per_px)
 
     page_w, page_h = width_px * mm_per_px, height_px * mm_per_px
     profile, bore, orientation, _axis = extract_revolution(elements)

@@ -58,7 +58,8 @@ class VectorElement:
     dash: Optional[str] = None
     text: Optional[str] = None          # only for TEXT elements
     bbox: Optional[tuple[float, float, float, float]] = None  # (x0, y0, x1, y1)
-    ocr_confidence: Optional[float] = None  # Tesseract confidence, raster scans only
+    ocr_confidence: Optional[float] = None  # OCR confidence, raster scans only
+    arrow_end: bool = False                 # filled triangle at a stroke end (scan linking signal)
 
 
 @dataclass

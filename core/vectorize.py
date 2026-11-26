@@ -145,20 +145,30 @@ def vectorize(cleaned: np.ndarray) -> list[VectorElement]:
 
 
 def _stroke_thickness(binary: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> float:
-    """Estimate stroke width by walking the perpendicular of a stroke."""
+    """Estimate stroke width by walking the perpendicular of a stroke.
+
+    Samples several points along the stroke and keeps the MINIMUM ink run —
+    a plain straight stroke has a constant true width, while probes that land
+    on a junction (where strokes merge) read wider. The minimum recovers the
+    stroke's own weight instead of the joint's.
+    """
     dx, dy = x2 - x1, y2 - y1
     length = math.hypot(dx, dy)
     if length == 0:
         return 0.0
     nx, ny = -dy / length, dx / length
-    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
     h, w = binary.shape[:2]
-    count = 0
-    for t in range(-6, 7):
-        x = int(round(cx + nx * t)); y = int(round(cy + ny * t))
-        if 0 <= x < w and 0 <= y < h and binary[y, x] > 0:
-            count += 1
-    return float(max(1, count))
+
+    def _run_at(cx: float, cy: float) -> int:
+        count = 0
+        for t in range(-6, 7):
+            x = int(round(cx + nx * t)); y = int(round(cy + ny * t))
+            if 0 <= x < w and 0 <= y < h and binary[y, x] > 0:
+                count += 1
+        return count
+
+    widths = [_run_at(x1 + dx * t, y1 + dy * t) for t in (0.2, 0.35, 0.5, 0.65, 0.8)]
+    return float(max(1, min(widths)))
 
 
 def _runs_1d(line: np.ndarray) -> list[tuple[int, int]]:
