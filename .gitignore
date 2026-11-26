@@ -47,3 +47,10 @@ Thumbs.db
 # Regenerated deterministically by data/examples/real/generate_real_examples.py (see docs/BENCHMARK.md)
 data/examples/real/scan_test.png
 data/examples/real/scan_test_harsh.png
+
+# Corpus downloads — manifests/reports committed, raw files never
+data/corpus/*
+!data/corpus/manifest.jsonl
+!data/corpus/results.jsonl
+!data/corpus/screening.csv
+!data/corpus/golden/

@@ -1,0 +1,121 @@
+# DrawToSTEP — real engineering drawing corpus — source registry
+#
+# Machine-readable twin of docs/DATA_SOURCES.md. Consumed by
+# core/dataset_fetch.py (lists + planned actions) and by tests.
+# License attribution strings here are the REQUIRED credit lines for any
+# redistribution of derived artifacts (they are NOT a licence grant for the
+# drawings themselves — keep the originals out of git).
+
+version: 1
+registry_date: "2026-11-26"
+
+sources:
+  zenodo_open_mech:
+    display_name: "Open Mechanical 3D Models Dataset: 100 Components in STEP/IGES (Zenodo record 24167336)"
+    kind: zenodo
+    record_id: 24167336
+    api_base: "https://zenodo.org/api/records/24167336"
+    license: "CC-BY-4.0"
+    license_url: "https://creativecommons.org/licenses/by/4.0/"
+    attribution: "Open Mechanical 3D Models Dataset (zenodo.org/records/24167336), CC BY 4.0"
+    access_status: verified_open_curator_agent_sandbox_blocked
+    access_method: "HTTP GET (direct file URLs via Zenodo API)"
+    files:
+      - name: "1- 100 2D orthographic drawings.pdf"
+        url: "https://zenodo.org/api/records/24167336/files/1-%20100%202D%20orthographic%20drawings.pdf/content"
+        purpose: "100 engineering drawings, A3/A4, ~35 MB, mostly vector with a text layer; some pages raster"
+        approx_bytes: 36700160
+      - name: "3D STEP Files collection.zip"
+        url: "https://zenodo.org/api/records/24167336/files/3D%20STEP%20Files%20collection.zip/content"
+        purpose: "~100 STEP files, ~28 MB — Tier A (real) 3D ground truth for volume/bbox/face comparison"
+        approx_bytes: 29360128
+    usable_for:
+      - "Tier A external validation (volume / bbox / faces vs real STEP)"
+      - "vector parsing pipeline end-to-end regression at 100-drawing scale"
+      - "screening (body of revolution vs other) with real drawings"
+    not_usable_for:
+      - "dimension-text OCR accuracy on raster scans (pages are mostly clean vector)"
+      - "stress-testing of preprocessing (no degraded scans in this pack)"
+    page_split:
+      enabled: true
+      multi_page_pdf: "1- 100 2D orthographic drawings.pdf"
+      page_file_pattern: "page_{index:03d}.pdf"
+      step_dir: "step/"
+    notes:
+      - "Pages are single-view-per-page orthographic drawings of mechanical components."
+      - "STEP matching between pages and STEP files is best-effort by numeric stem; unmatched pages get gt_3d=null."
+      - "Direct download verified by curator (HTTP 200, range 206). NOT re-verified from the agent build sandbox (host blocked)."
+
+  hf_jcrzd:
+    display_name: "jcrzd/engineering-drawings (Hugging Face)"
+    kind: hf_tree
+    hf_api_tree: "https://huggingface.co/api/datasets/jcrzd/engineering-drawings/tree/main"
+    hf_resolve_base: "https://huggingface.co/datasets/jcrzd/engineering-drawings/resolve/main"
+    license: "unknown (HF dataset, unspecified by author — treat as research-only, do not redistribute binaries)"
+    license_url: ""
+    attribution: "jcrzd/engineering-drawings (huggingface.co/datasets/jcrzd/engineering-drawings)"
+    access_status: verified_open_curator_agent_sandbox_blocked
+    access_method: "HTTP GET (HF resolve endpoints)"
+    files:
+      - name: "<tree list, .jpg, ~1000 files, ~3509x2481 px>"
+        url: "https://huggingface.co/datasets/jcrzd/engineering-drawings/resolve/main/<filename>"
+        purpose: "1000 digitized academic engineering sheets (UNSW style, title block) — degraded-raster stress corpus"
+        approx_bytes: 400000000
+    usable_for:
+      - "robustness/stress corpus for raster path (scan_preprocess → vectorize)"
+      - "coverage metric: how many real sheets survive the pipeline at all"
+    not_usable_for:
+      - "dimension-accuracy corpus — majority of sheets have NO dimension values (drawing-reading exercises)"
+      - "Tier A ground truth (no 3D models attached)"
+    notes:
+      - "Retained as stress corpus only. Never report dimension accuracy on this set."
+
+  hf_ecado:
+    display_name: "ecado/rfq-engineering-drawings (Hugging Face)"
+    kind: hf_parquet
+    hf_api_tree: "https://huggingface.co/api/datasets/ecado/rfq-engineering-drawings/tree/main"
+    hf_resolve_base: "https://huggingface.co/datasets/ecado/rfq-engineering-drawings/resolve/main"
+    license: "unknown (HF dataset, unspecified by author — treat as research-only, do not redistribute binaries)"
+    license_url: ""
+    attribution: "ecado/rfq-engineering-drawings (huggingface.co/datasets/ecado/rfq-engineering-drawings)"
+    access_status: verified_open_curator_agent_sandbox_blocked
+    access_method: "HTTP GET (HF parquet files)"
+    files:
+      - name: "data/train-*.parquet"
+        url: "https://huggingface.co/datasets/ecado/rfq-engineering-drawings/resolve/main/data/train-*.parquet"
+        purpose: "600 samples, question/answer pairs — candidate OCR-dimension reading benchmark IF dimensions are actually present in answers"
+        approx_bytes: 60000000
+      - name: "validation/test parquets"
+        url: "https://huggingface.co/datasets/ecado/rfq-engineering-drawings/resolve/main/data/*-00000-of-*.parquet"
+        purpose: "held-out splits"
+        approx_bytes: 20000000
+    usable_for:
+      - "dimension-text reading accuracy benchmark — only after schema inspection (--inspect)"
+    not_usable_for:
+      - "geometry/volume validation (no 3D)"
+    notes:
+      - "Schema NOT inspected yet (agent sandbox cannot reach huggingface.co). Run: python -m core.dataset_fetch --source hf_ecado --inspect"
+      - "If the answer fields do not carry dimension values, this source is documented as unusable for OCR accuracy and skipped."
+
+  mechatlas:
+    display_name: "XUXU666/MechAtlas (Hugging Face)"
+    kind: hf_tree_gated
+    hf_api_tree: "https://huggingface.co/api/datasets/XUXU666/MechAtlas/tree/main"
+    hf_resolve_base: "https://huggingface.co/datasets/XUXU666/MechAtlas/resolve/main"
+    license: "CC-BY-4.0"
+    license_url: "https://creativecommons.org/licenses/by/4.0/"
+    attribution: "XUXU666/MechAtlas (huggingface.co/datasets/XUXU666/MechAtlas), CC BY 4.0"
+    access_status: gated_401
+    access_method: "HTTP GET — returns 401 without approved access (gated dataset)"
+    files:
+      - name: "49662 PDF+STEP pairs"
+        url: "https://huggingface.co/datasets/XUXU666/MechAtlas"
+        purpose: "the primary long-term target: real PDFs with matched STEP ground truth at scale"
+        approx_bytes: 40000000000
+    usable_for:
+      - "Tier A ground truth at 10-100x Zenodo scale (after access is granted)"
+    not_usable_for:
+      - "anything, until a human requests access with affiliation + research purpose"
+    notes:
+      - "DO NOT attempt to bypass the gate. Tracked as manual action in docs/DATA_SOURCES.md."
+      - "Manifest records this source with status=gated; the downloader REFUSES to fetch it."
