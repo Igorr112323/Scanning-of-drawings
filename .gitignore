@@ -22,6 +22,8 @@ htmlcov/
 *.app
 *.pkg
 *.spec
+# ...but the hand-written PyInstaller spec for the release build IS source
+!DrawToSTEP.spec
 
 # Exported 3D models (demo outputs regenerated on demand)
 exports/
