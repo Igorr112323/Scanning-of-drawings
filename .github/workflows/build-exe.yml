@@ -47,7 +47,22 @@ jobs:
         run: python data/examples/real/generate_real_examples.py
 
       - name: Build DrawToSTEP.exe
-        run: pyinstaller --noconfirm DrawToSTEP.spec
+        run: |
+          python -m pip show pyinstaller | Write-Host
+          python -m PyInstaller --noconfirm DrawToSTEP.spec 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "===== BUILD FAILED — tail of build.log ====="
+            Get-Content build.log -Tail 150
+            exit 1
+          }
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe-build-log
+          path: build.log
+          retention-days: 7
 
       - name: Smoke test — exe starts, Upload screen first
         env:
