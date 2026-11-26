@@ -7,6 +7,17 @@ on:
   workflow_dispatch:
   release:
     types: [published]
+  # also build on PRs that touch exe-relevant paths, so the artifact can be
+  # downloaded before merge (release upload stays release-only)
+  pull_request:
+    paths:
+      - ".github/workflows/build-exe.yml"
+      - "DrawToSTEP.spec"
+      - "app/**"
+      - "core/**"
+      - "requirements.txt"
+      - "data/examples/**"
+      - "pyproject.toml"
 
 permissions:
   contents: write
@@ -66,6 +77,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "screenshot failed" ; exit 1 }
 
       - name: Upload artifact
+        if: always()   # downloadable even if a smoke step fails — status is in the run log
         uses: actions/upload-artifact@v4
         with:
           name: DrawToSTEP-exe
