@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install system libraries for OpenCASCADE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libegl1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: python -m pytest -v
+
+      - name: Headless vertical slice (example PDF → STEP)
+        run: python -m app.main --headless data/examples/flange_shaft_demo.pdf --out /tmp/exports
+
+      - name: Verify STEP file is a valid B-rep (re-import)
+        run: |
+          python - <<'PY'
+          import cadquery as cq
+          solid = cq.importers.importStep("/tmp/exports/flange_shaft_demo.step")
+          volume = solid.val().Volume()
+          assert 800_000 < volume < 950_000, volume
+          print(f"STEP re-import OK, volume {volume:.1f} mm^3")
+          PY
