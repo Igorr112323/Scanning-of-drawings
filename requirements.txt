@@ -18,3 +18,6 @@ pytest>=8.0,<9.0
 matplotlib>=3.8,<4.0
 reportlab>=4.0,<6.0
 Pillow>=10.0,<12.0
+
+# Corpus tooling (Part 2/6/7)
+PyYAML>=6.0,<7.0          # data/sources.yaml registry (core/dataset_fetch.py)
