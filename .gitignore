@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Packaging artifacts
+*.exe
+*.dmg
+*.app
+*.pkg
+*.spec
+
+# Exported 3D models (demo outputs regenerated on demand)
+exports/
+
+# Example outputs produced by scripts (generated, not source)
+data/examples/*.step
+data/examples/*.stp
+data/examples/*.stl
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local secrets (never commit)
+.env
+*.pem

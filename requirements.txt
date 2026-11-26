@@ -1,0 +1,13 @@
+# DrawToSTEP — dependencies (offline desktop app, no cloud services)
+# Core runtime
+PyMuPDF>=1.24,<2.0        # vector PDF parsing (fitz)
+opencv-python-headless>=4.8,<5.0   # scan preprocessing (no GUI deps, headless-safe for CI)
+numpy>=1.26,<3.0
+cadquery>=2.4,<3.0        # OpenCASCADE-based CAD kernel (B-rep solids)
+
+# Desktop UI
+PySide6>=6.6,<7.0
+pytesseract>=0.3.10    # OCR bridge to system Tesseract (not required for vector PDFs)
+
+# Tests
+pytest>=8.0,<9.0
