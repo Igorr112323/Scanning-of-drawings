@@ -1,0 +1,80 @@
+{
+  "part": "Shaft, 3 steps, chamfers 2x45° at both ends, centre through hole",
+  "generator": "render(source PDF, 200 DPI) + rotate 2.5° + gaussian noise sigma=16 + slight blur",
+  "source_file": "scan_test.png",
+  "sheet": {
+    "name": "A4 landscape",
+    "width_mm": 297.0,
+    "height_mm": 210.0,
+    "scale": 1.0
+  },
+  "bore_diameter": 12.0,
+  "chamfer_mm": 2.0,
+  "profile_steps": [
+    [
+      20,
+      100,
+      40
+    ],
+    [
+      100,
+      160,
+      60
+    ],
+    [
+      160,
+      260,
+      30
+    ]
+  ],
+  "expected_length_mm": 240.0,
+  "expected_volume_mm3": 313296.3745767933,
+  "dimensions": [
+    {
+      "symbol": "DIAMETER",
+      "value": 40.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 60.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 30.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 12.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 240.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 80.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 60.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 100.0
+    },
+    {
+      "symbol": "CHAMFER",
+      "value": 2.0
+    },
+    {
+      "symbol": "CHAMFER",
+      "value": 2.0
+    }
+  ],
+  "scan": {
+    "dpi": 200,
+    "rotation_deg": 2.5,
+    "noise_sigma": 16.0,
+    "note": "OCR recall may be imperfect; unresolved dims MUST be flagged uncertain, never invented"
+  }
+}

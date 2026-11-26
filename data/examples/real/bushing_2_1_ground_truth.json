@@ -1,0 +1,36 @@
+{
+  "part": "Bushing, outer Ø20, bore Ø12, length 25, plotted 2:1 on A4 portrait",
+  "generator": "reportlab",
+  "source_file": "bushing_2_1.pdf",
+  "sheet": {
+    "name": "A4 portrait",
+    "width_mm": 210.0,
+    "height_mm": 297.0,
+    "scale": 0.5
+  },
+  "bore_diameter": 12.0,
+  "chamfer_mm": null,
+  "profile_steps": [
+    [
+      0,
+      25,
+      20
+    ]
+  ],
+  "expected_length_mm": 25.0,
+  "expected_volume_mm3": 5026.548245743669,
+  "dimensions": [
+    {
+      "symbol": "DIAMETER",
+      "value": 20.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 12.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 25.0
+    }
+  ]
+}

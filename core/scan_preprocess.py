@@ -29,27 +29,30 @@ def preprocess_scan(image: np.ndarray) -> np.ndarray:
     # gentle denoise — preserves thin dimension lines better than heavy blur
     gray = cv2.medianBlur(gray, 3)
 
-    # --- deskew -----------------------------------------------------------
-    # orientation of the dominant ink mass via image moments
-    dark = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    coords = np.column_stack(np.where(dark > 0))
-    angle = 0.0
-    if len(coords) > 500:
-        (cx, cy), (w, h), raw_angle = cv2.minAreaRect(coords[:, ::-1].astype(np.float32))
-        # minAreaRect angles are ambiguous by 90°; normalize into [-45, 45]
-        if raw_angle < -45:
-            raw_angle += 90
-        angle = float(raw_angle)
-        if abs(angle) < 0.3 or abs(angle) > 45:
-            angle = 0.0  # keep only plausible scan skew
-
-    if angle != 0.0:
-        h0, w0 = gray.shape
-        matrix = cv2.getRotationMatrix2D((w0 / 2, h0 / 2), angle, 1.0)
-        gray = cv2.warpAffine(gray, matrix, (w0, h0),
+    # --- deskew (projection profile: horizontal-line alignment concentrates ink
+    # into few rows — sub-degree accurate for line drawings, sign-agnostic) -----
+    def _rotate(src, a):
+        h0, w0 = src.shape
+        matrix = cv2.getRotationMatrix2D((w0 / 2, h0 / 2), a, 1.0)
+        return cv2.warpAffine(src, matrix, (w0, h0),
                               flags=cv2.INTER_CUBIC,
                               borderMode=cv2.BORDER_CONSTANT,
                               borderValue=255)
+
+    def _projection_score(src):
+        bw = cv2.threshold(src, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        proj = np.count_nonzero(bw, axis=1).astype(np.float64)
+        return float(proj.var())
+
+    coarse = np.arange(-5.0, 5.0 + 1e-9, 0.25)
+    scores = [_projection_score(_rotate(gray, a)) for a in coarse]
+    best = float(coarse[int(np.argmax(scores))])
+    fine = np.arange(best - 0.24, best + 0.24 + 1e-9, 0.06)
+    scores = [_projection_score(_rotate(gray, a)) for a in fine]
+    best = float(fine[int(np.argmax(scores))])
+    angle = best if abs(best) >= 0.06 else 0.0
+    if angle != 0.0 and abs(angle) <= 15.0:
+        gray = _rotate(gray, angle)
 
     # --- binarize ----------------------------------------------------------
     cleaned = cv2.adaptiveThreshold(

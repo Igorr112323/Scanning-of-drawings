@@ -74,7 +74,10 @@ def vectorize(cleaned: np.ndarray) -> list[VectorElement]:
     line_index = 0
     if lines is not None:
         for raw in lines:
-            x1, y1, x2, y2 = (int(v) for v in raw[0])
+            arr = np.asarray(raw).ravel()
+            if arr.size < 4:
+                continue
+            x1, y1, x2, y2 = (int(v) for v in arr[:4])
             length = math.hypot(x2 - x1, y2 - y1)
             if length < 1:
                 continue
@@ -97,39 +100,46 @@ def vectorize(cleaned: np.ndarray) -> list[VectorElement]:
             line_index += 1
 
     # --- dash-dot axis candidates -----------------------------------------
-    # thin horizontal strokes in regular groups are GOST centre lines
-    rows: dict[int, list[int]] = {}
-    for i, e in enumerate(elements):
-        if e.type is not ElementType.DIMENSION_LINE:
-            continue
-        p0, p1 = e.points
-        if abs(p0[1] - p1[1]) > 1.0:
-            continue
-        rows.setdefault(round((p0[1] + p1[1]) / 2.0 / 8.0), []).append(i)
-    consumed: set[int] = set()
+    # statistical row/column scan for the GOST alternating long-dash/dot
+    # rhythm — robust to Hough fragmentation on noisy scans
+    binary = cv2.threshold(cleaned, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     axis_index = 0
-    for _, idxs in rows.items():
-        xs = sorted(
-            (min(elements[i].points[0][0], elements[i].points[1][0]),
-             max(elements[i].points[0][0], elements[i].points[1][0]))
-            for i in idxs
-        )
-        gaps = [xs[i + 1][0] - xs[i][1] for i in range(len(xs) - 1)]
-        regular = bool(gaps) and max(gaps) - min(gaps) < 6.0 and all(g > 1.5 for g in gaps)
-        span = max(x1 for _, x1 in xs) - min(x0 for x0, _ in xs)
-        if regular and span > 150 and len(xs) >= 4:
-            axis_y = float(np.mean([(elements[i].points[0][1] + elements[i].points[1][1]) / 2.0 for i in idxs]))
-            x0 = float(min(x for x, _ in xs)); x1 = float(max(x for _, x in xs))
+    for orientation in ("row", "col"):
+        lines_found = _dash_dot_axes(binary, orientation)
+        for (a0, a1, fixed) in lines_found:
+            if orientation == "row":
+                points = [(float(a0), float(fixed)), (float(a1), float(fixed))]
+            else:
+                points = [(float(fixed), float(a0)), (float(fixed), float(a1))]
             elements.append(VectorElement(
                 id=_uid("A", axis_index), type=ElementType.AXIS,
-                points=[(x0, axis_y), (x1, axis_y)],
-                stroke_width=0.4, dash="[8 3 2 3] 0",
-                bbox=(x0, axis_y - 1, x1, axis_y + 1),
+                points=points, stroke_width=0.4, dash="[8 3 2 3] 0",
+                bbox=(min(points[0][0], points[1][0]), min(points[0][1], points[1][1]),
+                      max(points[0][0], points[1][0]), max(points[0][1], points[1][1])),
             ))
             axis_index += 1
-            consumed.update(idxs)
-    if consumed:
-        elements = [e for i, e in enumerate(elements) if i not in consumed]
+
+    # drop DIMENSION_LINE fragments that are actually the axis strokes
+    axis_lines = [e for e in elements if e.type is ElementType.AXIS and len(e.points) == 2]
+    if axis_lines:
+        def _on_axis(e) -> bool:
+            if e.type is not ElementType.DIMENSION_LINE or len(e.points) != 2:
+                return False
+            (p0, p1) = e.points
+            for ax in axis_lines:
+                (a0, a1) = ax.points
+                ax_dx, ax_dy = a1[0] - a0[0], a1[1] - a0[1]
+                norm = math.hypot(ax_dx, ax_dy)
+                if norm == 0:
+                    continue
+                for p in (p0, p1):
+                    dist = abs((p[0] - a0[0]) * ax_dy - (p[1] - a0[1]) * ax_dx) / norm
+                    if dist > 2.5:
+                        return False
+                return True
+            return False
+
+        elements = [e for e in elements if not _on_axis(e)]
 
     return elements
 
@@ -149,3 +159,81 @@ def _stroke_thickness(binary: np.ndarray, x1: int, y1: int, x2: int, y2: int) ->
         if 0 <= x < w and 0 <= y < h and binary[y, x] > 0:
             count += 1
     return float(max(1, count))
+
+
+def _runs_1d(line: np.ndarray) -> list[tuple[int, int]]:
+    xs = np.flatnonzero(line)
+    if xs.size == 0:
+        return []
+    splits = np.flatnonzero(np.diff(xs) > 1) + 1
+    starts = np.r_[0, splits]
+    ends = np.r_[splits, xs.size] - 1
+    return [(int(xs[s]), int(xs[e])) for s, e in zip(starts, ends)]
+
+
+def _axis_signature(runs: list[tuple[int, int]]) -> float | None:
+    """Validate a dash-dot rhythm; returns the covered span in px or None."""
+    if len(runs) < 6:
+        return None
+    span = runs[-1][1] - runs[0][0]
+    if span < 250:
+        return None
+    starts = np.array([r[0] for r in runs], dtype=np.float64)
+    d = np.diff(starts)
+    even, odd = d[0::2], d[1::2]
+    lens_even = np.array([runs[i][1] - runs[i][0] + 1 for i in range(0, len(runs), 2)], dtype=np.float64)
+    lens_odd = np.array([runs[i][1] - runs[i][0] + 1 for i in range(1, len(runs), 2)], dtype=np.float64)
+    if even.size < 2 or odd.size < 2:
+        return None
+    a, b = float(np.median(even)), float(np.median(odd))
+    len_even, len_odd = float(np.median(lens_even)), float(np.median(lens_odd))
+    lo, hi = min(a, b), max(a, b)
+    if lo < 12.0 or hi / lo < 1.35:
+        return None  # not an alternating long/short rhythm
+    for arr, med in ((even, a), (odd, b)):
+        if np.mean(np.abs(arr - med) / med > 0.35) > 0.25:
+            return None
+    if (a + b) / 2.0 < 18.0:
+        return None
+    # one parity must be LONG strokes (dashes) and the other SHORT (dots);
+    # random artefact rows (noise, arrowheads) have both parities short
+    long_len, short_len = max(len_even, len_odd), min(len_even, len_odd)
+    if long_len < 14.0 or short_len > 0.45 * long_len:
+        return None
+    long_lens = lens_even if len_even >= len_odd else lens_odd
+    long_med = np.median(long_lens)
+    if np.mean(np.abs(long_lens - long_med) / long_med > 0.40) > 0.25:
+        return None
+    return float(span)
+
+
+def _dash_dot_axes(binary: np.ndarray, orientation: str) -> list[tuple[float, float, float]]:
+    if orientation not in ("row", "col"):
+        raise ValueError(orientation)
+    h, w = binary.shape
+    good: list[tuple[int, int, int]] = []
+    scan = binary if orientation == "row" else binary.T
+    for fixed in range(scan.shape[0]):
+        runs = _runs_1d(scan[fixed] > 0)
+        if _axis_signature(runs) is None:
+            continue
+        good.append((fixed, runs[0][0], runs[-1][1]))
+    groups: list[list[tuple[int, int, int]]] = []
+    current: list[tuple[int, int, int]] = []
+    for item in good:
+        if current and item[0] - current[-1][0] > 2:
+            groups.append(current)
+            current = []
+        current.append(item)
+    if current:
+        groups.append(current)
+    out: list[tuple[float, float, float]] = []
+    for group in groups:
+        if len(group) < 2:
+            continue  # noise row, not a stroked axis
+        fixed = float(np.mean([item[0] for item in group]))
+        a0 = float(min(item[1] for item in group))
+        a1 = float(max(item[2] for item in group))
+        if a1 - a0 >= 250:
+            out.append((a0, a1, fixed))
+    return out

@@ -1,0 +1,68 @@
+{
+  "part": "Vertical-axis shaft, off-centre on A4 portrait, round top end (R12.5)",
+  "generator": "matplotlib",
+  "source_file": "rotated_shaft.pdf",
+  "sheet": {
+    "name": "A4 portrait",
+    "width_mm": 210.0,
+    "height_mm": 297.0,
+    "scale": 1.0,
+    "orientation": "vertical-axis"
+  },
+  "bore_diameter": null,
+  "chamfer_mm": null,
+  "profile_steps": [
+    [
+      45,
+      95,
+      25
+    ],
+    [
+      95,
+      135,
+      50
+    ],
+    [
+      135,
+      185,
+      30
+    ]
+  ],
+  "expected_length_mm": 152.5,
+  "expected_volume_mm3": 142517.04173316195,
+  "cap": "hemisphere R12.5 on top of the Ø25 neck",
+  "dimensions": [
+    {
+      "symbol": "DIAMETER",
+      "value": 25.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 50.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 30.0
+    },
+    {
+      "symbol": "RADIUS",
+      "value": 12.5
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 152.5
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 62.5
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 40.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 50.0
+    }
+  ]
+}

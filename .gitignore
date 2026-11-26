@@ -41,3 +41,6 @@ Thumbs.db
 # Local secrets (never commit)
 .env
 *.pem
+
+# Regenerated deterministically by data/examples/real/generate_real_examples.py (see docs/BENCHMARK.md)
+data/examples/real/scan_test.png

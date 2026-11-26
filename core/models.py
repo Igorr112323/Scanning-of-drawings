@@ -41,6 +41,7 @@ class Symbol(str, enum.Enum):
     RADIUS = "RADIUS"          # R
     LINEAR = "LINEAR"          # plain number (length / height / width)
     THREAD = "THREAD"          # M (metrical thread)
+    CHAMFER = "CHAMFER"        # "2×45°", "C2" — leg length in mm
     UNKNOWN = "UNKNOWN"
 
 
@@ -84,9 +85,12 @@ class Dimension:
             Symbol.RADIUS: "R",
             Symbol.THREAD: "M",
             Symbol.LINEAR: "",
+            Symbol.CHAMFER: "",
             Symbol.UNKNOWN: "?",
         }[self.symbol]
         value = int(self.value) if float(self.value).is_integer() else self.value
+        if self.symbol is Symbol.CHAMFER:
+            return f"{value}×45°"
         return f"{prefix}{value}"
 
 
@@ -137,6 +141,9 @@ class Drawing:
     # Half-profile of a body of revolution, derived from CONTOUR elements and
     # the axis line. Coordinates in millimetres, r measured from the axis.
     profile: list[ProfilePoint] = field(default_factory=list)
+    # Centre through-hole diameter in mm, detected from inner-wall contour
+    # lines (bored parts in section views). None when the part is solid.
+    bore_diameter: Optional[float] = None
 
     def elements_of_type(self, element_type: ElementType) -> list[VectorElement]:
         return [e for e in self.elements if e.type == element_type]

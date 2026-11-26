@@ -55,3 +55,31 @@ def test_uncertain_dimension_skipped_with_warning():
     _profile, contradictions = solve_constraints(dims, PROFILE)
     assert [c for c in contradictions if c.severity == "error"] == []
     assert any(c.severity == "warning" for c in contradictions)
+
+
+def test_estimate_scale_public_api_matches_solve():
+    from core.constraint_solver import estimate_scale
+    from core.models import Dimension, Symbol
+
+    profile = [
+        ProfilePoint(0.0, 0.0), ProfilePoint(0.0, 12.5), ProfilePoint(50.0, 12.5),
+        ProfilePoint(50.0, 22.5), ProfilePoint(90.0, 22.5), ProfilePoint(90.0, 10.0),
+        ProfilePoint(150.0, 10.0), ProfilePoint(150.0, 0.0),
+    ]
+    def dim(text, symbol, value, uncertain=False):
+        return Dimension(id=text, symbol=symbol, value=value, raw_text=text,
+                        confidence=0.95, linked_element_id="x", is_uncertain=uncertain)
+
+    dims = [dim("Ø25", Symbol.DIAMETER, 25.0), dim("Ø45", Symbol.DIAMETER, 45.0),
+            dim("Ø20", Symbol.DIAMETER, 20.0)]
+    assert estimate_scale(dims, profile) == 1.0
+    # doubled prints on the sheet: true size is twice the plotted geometry
+    dims2 = [dim("Ø50", Symbol.DIAMETER, 50.0), dim("Ø90", Symbol.DIAMETER, 90.0),
+             dim("Ø40", Symbol.DIAMETER, 40.0)]
+    assert estimate_scale(dims2, profile) == 2.0
+    # half-size print (plotted 2:1)
+    dims3 = [dim("Ø12.5", Symbol.DIAMETER, 12.5), dim("Ø22.5", Symbol.DIAMETER, 22.5)]
+    assert estimate_scale(dims3, profile) == 0.5
+    # degenerate input never crashes
+    assert estimate_scale([], profile) == 1.0
+    assert estimate_scale(dims, []) == 1.0

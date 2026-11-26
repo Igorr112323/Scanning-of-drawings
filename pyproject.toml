@@ -10,6 +10,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "DrawToSTEP Team" }]
+dependencies = [
+    "PyMuPDF>=1.24,<2.0",       # vector PDF parsing (fitz)
+    "opencv-python>=4.8,<6.0",  # scan preprocessing/vectorization
+    "rapidocr-onnxruntime>=1.4,<2.0",  # offline ONNX OCR (bundled models)
+    "numpy>=1.26,<3.0",
+    "cadquery>=2.4,<3.0",       # OpenCASCADE-based B-rep kernel
+    "PySide6>=6.6,<7.0",        # desktop UI
+    "pytesseract>=0.3.10",      # optional OCR fallback to system Tesseract
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

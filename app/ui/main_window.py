@@ -38,7 +38,7 @@ from app.ui.widgets.icons import (
 )
 
 from core.cad_builder import build_solid, export_step, export_stl
-from core.constraint_solver import solve_constraints
+from core.constraint_solver import estimate_scale, solve_constraints
 from core.ocr_gost import recognize_dimensions
 from core.pdf_parser import parse_pdf
 from core.scan_preprocess import preprocess_scan
@@ -262,7 +262,8 @@ class MainWindow(QMainWindow):
         try:
             drawing = parse_pdf(path)
             dimensions = recognize_dimensions(drawing)
-            scaled_profile, contradictions = solve_constraints(dimensions, drawing.profile)
+            scaled_profile, contradictions = solve_constraints(
+                dimensions, drawing.profile, bore_diameter=drawing.bore_diameter)
         except Exception as exc:  # surfaced, never swallowed
             QMessageBox.critical(self, "Не удалось разобрать чертёж", f"{exc}")
             return
@@ -271,6 +272,8 @@ class MainWindow(QMainWindow):
         self._pipeline_result = {
             "file_path": path,
             "drawing": drawing,
+            "scale": estimate_scale(dimensions, drawing.profile),
+            "bore_diameter": drawing.bore_diameter,
             "dimensions": dimensions,
             "profile": scaled_profile if scaled_profile else drawing.profile,
             "contradictions": contradictions,
@@ -286,8 +289,10 @@ class MainWindow(QMainWindow):
 
     def _on_build_requested(self, confirmed_dimensions) -> None:
         profile = self._pipeline_result.get("profile") or []
+        bore = self._pipeline_result.get("bore_diameter")
+        bore_true = bore * self._pipeline_result.get("scale", 1.0) if bore else None
         try:
-            solid = build_solid(profile, confirmed_dimensions)
+            solid = build_solid(profile, confirmed_dimensions, bore_diameter=bore_true)
             volume = solid.val().Volume()
         except Exception as exc:
             QMessageBox.critical(self, "Не удалось построить 3D", str(exc))

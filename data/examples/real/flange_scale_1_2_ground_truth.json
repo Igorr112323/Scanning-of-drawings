@@ -1,0 +1,36 @@
+{
+  "part": "Flange, outer Ø100, bore Ø40, width 30, plotted 1:2 on A4 landscape",
+  "generator": "reportlab",
+  "source_file": "flange_scale_1_2.pdf",
+  "sheet": {
+    "name": "A4 landscape",
+    "width_mm": 297.0,
+    "height_mm": 210.0,
+    "scale": 0.5
+  },
+  "bore_diameter": 40.0,
+  "chamfer_mm": null,
+  "profile_steps": [
+    [
+      0,
+      30,
+      100
+    ]
+  ],
+  "expected_length_mm": 30.0,
+  "expected_volume_mm3": 197920.33717615696,
+  "dimensions": [
+    {
+      "symbol": "DIAMETER",
+      "value": 100.0
+    },
+    {
+      "symbol": "DIAMETER",
+      "value": 40.0
+    },
+    {
+      "symbol": "LINEAR",
+      "value": 30.0
+    }
+  ]
+}

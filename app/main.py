@@ -30,14 +30,15 @@ def main() -> int:
 
 def _headless(pdf: Path, out_dir: Path) -> int:
     from core.cad_builder import build_solid, export_step, export_stl
-    from core.constraint_solver import solve_constraints
+    from core.constraint_solver import estimate_scale, solve_constraints
     from core.ocr_gost import recognize_dimensions
     from core.pdf_parser import parse_pdf
 
     t0 = time.perf_counter()
     drawing = parse_pdf(pdf)
     dimensions = recognize_dimensions(drawing)
-    profile, contradictions = solve_constraints(dimensions, drawing.profile)
+    profile, contradictions = solve_constraints(dimensions, drawing.profile,
+                                                bore_diameter=drawing.bore_diameter)
     if not profile:
         print("ERROR: не удалось распознать профиль детали вращения", file=sys.stderr)
         return 2
@@ -56,7 +57,13 @@ def _headless(pdf: Path, out_dir: Path) -> int:
         print("ERROR: есть противоречия — 3D не собрана", file=sys.stderr)
         return 3
 
-    solid = build_solid(profile, dimensions)
+    scale = estimate_scale(dimensions, drawing.profile)
+    bore_true = drawing.bore_diameter * scale if drawing.bore_diameter else None
+    if scale != 1.0:
+        print(f"Масштаб чертежа: {scale:.4g}× (геометрия масштабирована к истинным мм)")
+    if bore_true:
+        print(f"Отверстие: Ø{bore_true:.4g} мм (построено в 3D)")
+    solid = build_solid(profile, dimensions, bore_diameter=bore_true)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = pdf.stem
     step_path = export_step(solid, out_dir / f"{stem}.step")

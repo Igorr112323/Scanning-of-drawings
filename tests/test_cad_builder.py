@@ -65,3 +65,29 @@ def test_full_pipeline_from_generated_pdf(tmp_path):
     assert [c for c in contradictions if c.severity == "error"] == []
     solid = build_solid(profile, dims)
     assert solid.val().Volume() == pytest.approx(EXPECTED_VOLUME, rel=1e-3)
+
+
+def test_plain_rectangle_chamfered_ends_match_analytic():
+    # plain rectangle half-profile, 45° chamfers on both outer corners
+    profile = [
+        ProfilePoint(0.0, 0.0), ProfilePoint(0.0, 30.0),
+        ProfilePoint(150.0, 30.0), ProfilePoint(150.0, 0.0),
+    ]
+    leg = 2.0
+    chamfer = math.pi * (30.0**2 * leg - (30.0**3 - 28.0**3) / 3.0)
+    expected = math.pi * 30.0**2 * 150.0 - 2.0 * chamfer
+    solid = build_solid(profile, chamfer_mm=leg)
+    assert solid.val().Volume() == pytest.approx(expected, rel=1e-6)
+
+
+def test_plain_rectangle_chamfered_ends_with_bore_match_analytic():
+    profile = [
+        ProfilePoint(0.0, 0.0), ProfilePoint(0.0, 30.0),
+        ProfilePoint(150.0, 30.0), ProfilePoint(150.0, 0.0),
+    ]
+    leg = 2.0
+    chamfer = math.pi * (30.0**2 * leg - (30.0**3 - 28.0**3) / 3.0)
+    expected = (math.pi * 30.0**2 * 150.0 - 2.0 * chamfer
+                - math.pi * 6.0**2 * 150.0)
+    solid = build_solid(profile, bore_diameter=12.0, chamfer_mm=leg)
+    assert solid.val().Volume() == pytest.approx(expected, rel=1e-6)
