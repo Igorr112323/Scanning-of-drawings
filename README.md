@@ -21,7 +21,7 @@ not solids. DrawToSTEP closes that gap for a narrow, well-defined class of parts
 
 - Чертежи часто содержат К-сведения: оборонка, медицина, приборостроение, режимные предприятия.
 - Облачный OCR/CAD-сервис = юридически невозможный сценарий.
-- Никаких сетевых вызовов в коде: PDF разбирается локально (PyMuPDF), OCR — локальный Tesseract, CAD — локальный OpenCASCADE.
+- Никаких сетевых вызовов в коде: PDF разбирается локально (PyMuPDF), OCR — локальный RapidOCR (ONNX) с опциональным fallback на Tesseract, CAD — локальный OpenCASCADE.
 - Целевая упаковка: локальный `.exe` через PyInstaller (Phase 2).
 
 ## Что уже работает (MVP, Phase 1) / What works now
@@ -67,6 +67,10 @@ not solids. DrawToSTEP closes that gap for a narrow, well-defined class of parts
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
+# Linux: OpenCV нужен системный libGL (CI это делает автоматически)
+# Debian/Ubuntu: sudo apt-get install -y libgl1 libglu1-mesa libegl1
+# Windows/macOS: отдельно ставить нечего
 
 # GUI (нужен дисплей; Linux: системные libGL/xkbcommon)
 python -m app.main
@@ -145,7 +149,7 @@ CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-�
   («как влезло») будет определено, но отмечено предупреждением.
 - Сечения/фаски: v1 выдаёт ступенчатое тело вращения; конические фаски из чертежа не восстанавливаются.
 - STEP — B-rep solid, не Feature Tree. Редактирование истории построения — задача CAD-пакета пользователя.
-- Сканы: базовый OpenCV (deskew/binarize) и OCR-stub готовы, промышленный конвейер — issue Phase 2.
+- Сканы: OpenCV-конвейер (deskew/binarize/векторизация) + локальный RapidOCR работают; на синтетическом скане shaft-примера восстановлено тело с точностью < 1% по объёму. Слабое звено — привязка размерных линий к контуру на шуме, размеры с чертежа часто остаются в статусе «требуют подтверждения». Промышленный конвейер — Phase 2.
 
 ## Структура репозитория / Repository layout
 
@@ -155,7 +159,7 @@ core/       парсер PDF, OpenCV-препроцессинг, вектори�
             солвер ограничений, CAD-сборка (CadQuery), модели данных
 tests/      pytest
 data/examples/   синтетический пример + генератор (код, не скачано извне)
-docs/       ARCHITECTURE.md, ROADMAP.md
+docs/       ARCHITECTURE.md, ROADMAP.md, BENCHMARK.md
 ```
 
 ## Лицензия / License
