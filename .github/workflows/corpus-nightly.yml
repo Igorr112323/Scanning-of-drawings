@@ -1,0 +1,99 @@
+name: corpus-nightly
+
+# Real-corpus nightly run: downloads open corpus sources (GitHub-hosted
+# runners can reach them; the build sandbox cannot), screens, runs the full
+# pipeline, regenerates the benchmark docs and uploads everything as
+# artifacts. Never commits anything; fails only on infrastructure errors
+# (source unreachable at all, checkout/setup failure). Per-file failures
+# are data, not job failures.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # 03:17 UTC nightly
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'pages/files per source'
+        required: true
+        default: '200'
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install system libraries for OpenCASCADE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libegl1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore corpus download cache
+        uses: actions/cache@v4
+        with:
+          path: data/corpus
+          key: corpus-${{ github.run_id }}
+          restore-keys: corpus-
+
+      - name: Download corpus (zenodo_open_mech)
+        run: python -m core.dataset_fetch --source zenodo_open_mech --limit ${{ inputs.limit || 200 }} --out data/corpus/zenodo_open_mech
+
+      - name: Screen corpus
+        run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv
+
+      - name: Run pipeline on BODY_OF_REVOLUTION files
+        run: python -m core.corpus_run --corpus data/corpus --screening data/corpus/screening.csv --out data/corpus/results.jsonl --timeout 120
+
+      - name: Regenerate benchmark docs
+        run: python -m core.corpus_report
+
+      - name: Job summary (funnel)
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import csv, json, pathlib
+          from collections import Counter
+          root = pathlib.Path("data/corpus")
+          manifest = sum(1 for l in (root / "manifest.jsonl").read_text().splitlines() if l.strip()) if (root / "manifest.jsonl").exists() else 0
+          screening_rows = list(csv.DictReader(open(root / "screening.csv"))) if (root / "screening.csv").exists() else []
+          results = [json.loads(l) for l in (root / "results.jsonl").read_text().splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
+          print("## Corpus funnel\n")
+          print(f"- manifest records: **{manifest}**")
+          print(f"- screened: **{len(screening_rows)}**")
+          for k, v in Counter(r["verdict"] for r in screening_rows).most_common():
+              print(f"  - {k}: {v}")
+          print(f"- processed: **{len(results)}**")
+          for k, v in Counter(r["status"] for r in results).most_common():
+              print(f"  - {k}: {v}")
+          gt = [r for r in results if r.get("gt")]
+          print(f"- Tier A (matched STEP): **{len(gt)}**")
+          PY
+
+      - name: Upload corpus artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-results
+          path: |
+            data/corpus/manifest.jsonl
+            data/corpus/screening.csv
+            data/corpus/results.jsonl
+            docs/CORPUS_BENCHMARK.md
+            docs/BUG_HARVEST.md
+            reports/
+          if-no-files-found: warn
+          retention-days: 30
