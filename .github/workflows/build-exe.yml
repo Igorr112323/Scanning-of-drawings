@@ -101,8 +101,18 @@ jobs:
         run: |
           $report = Join-Path $env:TEMP "drawtostep_ci_report.txt"
           Remove-Item $report -ErrorAction SilentlyContinue
-          $out = & .\dist\DrawToSTEP.exe --selftest 2>&1
-          $code = $LASTEXITCODE
+          $sout = Join-Path $env:RUNNER_TEMP "selftest_out.txt"
+          $serr = Join-Path $env:RUNNER_TEMP "selftest_err.txt"
+          # PowerShell does NOT wait for GUI-subsystem exes launched with & — use Start-Process -Wait
+          try {
+            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -ArgumentList "--selftest" `
+              -Wait -PassThru -RedirectStandardOutput $sout -RedirectStandardError $serr
+            $code = $proc.ExitCode
+          } catch {
+            Write-Host "Start-Process failed: $_"
+            Write-Output ("::error::Start-Process failed: " + ($_ -replace '%','%25'))
+            exit 1
+          }
           Write-Host "exit code: $code"
           function Emit($line) {
             $l = ($line -replace '%', '%25') -replace '[\r\n]', ' '
@@ -110,7 +120,11 @@ jobs:
           }
           Write-Output ("::error::selftest exit code: " + $code)
           $i = 0
-          $out | ForEach-Object { if ($i -lt 25) { Emit $_; $i++ } }
+          foreach ($f in @($sout, $serr)) {
+            if (Test-Path $f) {
+              Get-Content $f | ForEach-Object { if ($i -lt 25) { Emit $_; $i++ } }
+            }
+          }
           Write-Host "===== ci report file ====="
           if (Test-Path $report) {
             Get-Content $report | ForEach-Object { Write-Host $_; Emit $_ }
@@ -123,10 +137,29 @@ jobs:
       - name: Smoke test — headless build demo (STEP/STL via the frozen bundle)
         run: |
           $outDir = Join-Path $env:RUNNER_TEMP "exe_headless"
-          $out = & .\dist\DrawToSTEP.exe --headless data\examples\flange_shaft_demo.pdf --out $outDir 2>&1
-          $code = $LASTEXITCODE
+          $sout = Join-Path $env:RUNNER_TEMP "headless_out.txt"
+          $serr = Join-Path $env:RUNNER_TEMP "headless_err.txt"
+          try {
+            $proc = Start-Process -FilePath ".\dist\DrawToSTEP.exe" -Wait -PassThru `
+              -ArgumentList "--headless","data\examples\flange_shaft_demo.pdf","--out",$outDir `
+              -RedirectStandardOutput $sout -RedirectStandardError $serr
+            $code = $proc.ExitCode
+          } catch {
+            Write-Host "Start-Process failed: $_"
+            Write-Output ("::error::Start-Process failed (headless): " + ($_ -replace '%','%25'))
+            exit 1
+          }
           Write-Host "exit code: $code"
-          $out | Write-Host
+          function Emit($line) {
+            $l = ($line -replace '%', '%25') -replace '[\r\n]', ' '
+            if ($l.Trim()) { Write-Output ("::error::" + $l) }
+          }
+          $i = 0
+          foreach ($f in @($sout, $serr)) {
+            if (Test-Path $f) {
+              Get-Content $f | ForEach-Object { Write-Host $_; if ($i -lt 15) { Emit $_; $i++ } }
+            }
+          }
           $step = Join-Path $outDir "flange_shaft_demo.step"
           $stl = Join-Path $outDir "flange_shaft_demo.stl"
           if ($code -ne 0) {
