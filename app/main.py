@@ -21,6 +21,14 @@ from pathlib import Path
 
 
 def main() -> int:
+    # Windows code pages (cp1252/cp866) cannot encode the Russian UI/log text —
+    # and a frozen windowed exe redirected via Start-Process inherits cp1252.
+    # Never let a log line crash the pipeline: UTF-8 with replacement chars.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="DrawToSTEP — чертёж → STEP")
     parser.add_argument("--headless", metavar="DRAWING", default=None,
                         help="run the pipeline without the GUI and export STEP/STL "

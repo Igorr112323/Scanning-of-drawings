@@ -99,6 +99,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_DEBUG_PLUGINS: "1"
+          PYTHONIOENCODING: utf-8
         run: |
           $report = Join-Path $env:TEMP "drawtostep_ci_report.txt"
           Remove-Item $report -ErrorAction SilentlyContinue
@@ -141,6 +142,8 @@ jobs:
           if ($code -ne 0) { exit 1 }
 
       - name: Smoke test — headless build demo (STEP/STL via the frozen bundle)
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           $outDir = Join-Path $env:RUNNER_TEMP "exe_headless"
           $sout = Join-Path $env:RUNNER_TEMP "headless_out.txt"
@@ -195,6 +198,7 @@ jobs:
       - name: Render Upload screen screenshot (for docs/artifacts)
         env:
           QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
         run: |
           $sout = Join-Path $env:RUNNER_TEMP "shot_out.txt"
           $serr = Join-Path $env:RUNNER_TEMP "shot_err.txt"
