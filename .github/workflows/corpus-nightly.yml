@@ -52,6 +52,15 @@ jobs:
       - name: Download corpus (zenodo_open_mech)
         run: python -m core.dataset_fetch --source zenodo_open_mech --limit ${{ inputs.limit || 200 }} --out data/corpus/zenodo_open_mech
 
+      # ~1000 JPG drawings without dimension values: they flow through
+      # download -> manifest -> screen; downstream stages handle them as
+      # stress/coverage data, never as accuracy evidence. HF flakiness must
+      # not fail the nightly (Per-file isolation already inside the fetcher;
+      # this guards against a full-source outage).
+      - name: Download corpus (hf_jcrzd, best effort)
+        continue-on-error: true
+        run: python -m core.dataset_fetch --source hf_jcrzd --limit ${{ inputs.limit || 200 }} --out data/corpus/hf_jcrzd
+
       - name: Screen corpus
         run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv
 
