@@ -86,6 +86,9 @@ exe = EXE(
     upx=False,
     runtime_tmpdir=None,
     console=False,
-    disable_windowed_traceback=False,
+    # windowed builds default to a modal "Fatal error" dialog on unhandled
+    # exceptions, which hangs forever on headless CI runners. Print the
+    # traceback to stderr instead so CI can capture it.
+    disable_windowed_traceback=True,
     icon=None,
 )
