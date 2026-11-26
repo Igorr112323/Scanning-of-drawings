@@ -108,6 +108,7 @@ jobs:
             $l = ($line -replace '%', '%25') -replace '[\r\n]', ' '
             if ($l.Trim()) { Write-Output ("::error::" + $l) }
           }
+          Write-Output ("::error::selftest exit code: " + $code)
           $i = 0
           $out | ForEach-Object { if ($i -lt 25) { Emit $_; $i++ } }
           Write-Host "===== ci report file ====="
