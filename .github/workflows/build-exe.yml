@@ -39,10 +39,31 @@ jobs:
 
       - name: Install dependencies
         run: |
+          function Emit-Log-Tail($file, $max) {
+            $i = 0
+            Get-Content $file -Tail $max | ForEach-Object {
+              $l = ($_ -replace '%', '%25') -replace '[\r\n]', ' '
+              if ($l.Trim() -and $i -lt 12) {
+                Write-Output ("::error::" + $l)
+                $i++
+              }
+            }
+          }
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
+          python -m pip install -r requirements.txt > deps_install.log 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "requirements install failed - emitting log tail as annotations"
+            Emit-Log-Tail deps_install.log 40
+            exit 1
+          }
+          python -m pip install pyinstaller > pyinstaller_install.log 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "pyinstaller install failed - emitting log tail as annotations"
+            Emit-Log-Tail pyinstaller_install.log 40
+            exit 1
+          }
           python --version
+          python -m PyInstaller --version
 
       - name: Regenerate the scan example (gitignored, deterministic)
         run: python data/examples/real/generate_real_examples.py
