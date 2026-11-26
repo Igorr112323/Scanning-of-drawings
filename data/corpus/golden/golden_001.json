@@ -1,0 +1,52 @@
+{
+  "schema": "drawtostep.golden.v1",
+  "id": "golden-001",
+  "file": "golden_001.pdf",
+  "provenance": "synthetic-generated",
+  "generated_by": "data/corpus/golden/generate_golden.py",
+  "generator_seed": 20261126,
+  "verified_by": "analytic (stepped body of revolution: exact cylinder-sum volume, exact bbox)",
+  "verified_at": "2026-11-26",
+  "drawing": {
+    "steps": [
+      {
+        "x_end_mm": 45.0,
+        "radius_mm": 16.5
+      },
+      {
+        "x_end_mm": 65.0,
+        "radius_mm": 6.0
+      },
+      {
+        "x_end_mm": 95.0,
+        "radius_mm": 19.5
+      }
+    ],
+    "total_length_mm": 95.0
+  },
+  "expected": {
+    "dimensions": [
+      {
+        "symbol": "DIAMETER",
+        "value_mm": 33.0
+      },
+      {
+        "symbol": "DIAMETER",
+        "value_mm": 12.0
+      },
+      {
+        "symbol": "DIAMETER",
+        "value_mm": 39.0
+      },
+      {
+        "symbol": "LINEAR",
+        "value_mm": 95.0
+      }
+    ],
+    "volume_mm3": 76588.1,
+    "bbox_mm": {
+      "length": 95.0,
+      "diameter": 39.0
+    }
+  }
+}
