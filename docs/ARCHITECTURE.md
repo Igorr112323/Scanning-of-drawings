@@ -91,6 +91,28 @@ scan_test.png ─► scan_preprocess ─► vectorize ─► ocr_words (RapidOCR
    scan pipeline in a `QThread` (`ScanWorker`) while the Processing screen animates; the
    Verification screen is populated only when OCR finishes (never half-filled). The headless
    entry point accepts the same files (`--headless scan_test.png`) with the same tolerances.
+7. **Ø recovery via geometry (propose, never auto-apply).** RapidOCR drops the Ø glyph
+   ("Ø60" → "060"). `core.diameter_recovery.propose_geometry_bound_diameters` cross-checks
+   the printed number against axis-referenced stroke measurements and the extracted profile:
+   if it matches a measured diameter (outer surface or bore inner walls) within
+   `max(0.75 mm, 2 %)`, the dimension is re-emitted as `Ø<value>` with **confidence 0.85,
+   `is_uncertain = True`, `proposed_by_geometry = True`** — the Verification row pre-fills
+   `Ø<value>` and shows «предложено по геометрии — подтверди»; the user confirms with ONE
+   click. Mismatch (e.g. geometry 55 vs printed 060) proposes nothing and the row stays
+   uncertain. Idempotent. Never auto-applied — the 3D gate is unchanged.
+8. **Real-scan harness.** `python -m core.benchmark_real --scan file.png [--gt gt.json]`
+   produces a Markdown report (default `docs/real_scan_report.md`): DPI (metadata or assumed
+   200 + warning), blur/noise/border-ink metrics, dims found/linked/uncertain/proposed,
+   solver contradictions, estimated linear error, volume vs GT, verdict. Works on any scan —
+   see `data/examples/real_scans/README_RU.md` for how to scan correctly. Quality below
+   threshold (DPI < 300 or linear error > tolerance) shows an orange banner in Verification:
+   «Низкое качество скана — пересканируйте в 300 DPI, точность ~3 мм».
+9. **Bundle & demo mode.** `DrawToSTEP.spec` (PyInstaller onefile) bundles PySide6,
+   CadQuery/OCP, OpenCV, RapidOCR (ONNX models) + the demo PDF and a regenerated scan example;
+   `.github/workflows/build-exe.yml` builds on `windows-latest` on release/dispatch, smoke-tests
+   (`--selftest` offscreen + `--headless` STEP build of the demo PDF), uploads the artifact and
+   attaches it to the GitHub Release. `--demo` launches with the bundled flange example
+   pre-loaded (skips the file dialog); `--selftest`/`--screenshot` are CI smoke flags.
 
 ## How the v1 parser works
 
@@ -150,7 +172,8 @@ it shows exactly the exported geometry and needs no OpenGL.
 Vector PDF → solid: ~30 ms on the demo example (parse+solve+revolve). Rendering is one-shot;
 no GPU required.
 
-## Packaging (Phase 2)
+## Packaging
 
-PyInstaller one-folder build (`pyinstaller --noconfirm app/main.py`) after Phase 2 issues land;
-UI already avoids network and temp files outside standard paths.
+PyInstaller onefile (`DrawToSTEP.spec`; build config in `.github/workflows/build-exe.yml`,
+Windows x64). UI avoids network and temp files outside standard paths; bundled examples live
+under `data/` via `sys._MEIPASS` (see `app/resources.py`).

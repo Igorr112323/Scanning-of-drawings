@@ -68,6 +68,16 @@ volume 870,220.9 mm³ vs analytic π·(25²·120 + 45²·80 + 20²·100) = 870,2
 - `data/examples/real/generate_real_examples.py` needs `matplotlib`,
   `reportlab` and `Pillow` (declared as the `examples` extra in
   `pyproject.toml`, plus in `requirements.txt`).
+- **Zero-led Ø recovery**: the 4 Ø callouts arrive as `Ø60/40/30/12`
+  (confidence 0.85, `proposed_by_geometry=True`, still uncertain) — one
+  click each to confirm. Mismatching geometry proposes nothing.
+- **Harsh second scan** (`scan_test_harsh.png`: −4.0°, σ=24, seed 20240522):
+  10/10 linked, 4 Ø proposed, volume 312,731.9 mm³ (**−0.18 %** vs GT).
+  The real-scan harness (`core/benchmark_real.py`) runs on any dropped scan;
+  both scans report the expected low-DPI warning (200 < 300 DPI).
+- **`.exe`**: PyInstaller spec + `build-exe.yml` (windows-latest, release/dispatch);
+  CI smoke-tests `--selftest` (window builds, Upload first) and `--headless`
+  STEP build of the bundled demo PDF before uploading the artifact.
 - Reproduce:
   ```bash
   python -m app.main --headless data/examples/real/shaft_3step_chamfer_bore.pdf --out /tmp/out

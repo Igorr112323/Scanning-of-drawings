@@ -1,0 +1,86 @@
+name: build-exe
+
+# Builds DrawToSTEP.exe for Windows (jury demo). Triggered manually or for a
+# published release. Artifact is uploaded always; release asset only on release.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Regenerate the scan example (gitignored, deterministic)
+        run: python data/examples/real/generate_real_examples.py
+
+      - name: Build DrawToSTEP.exe
+        run: pyinstaller --noconfirm DrawToSTEP.spec
+
+      - name: Smoke test — exe starts, Upload screen first
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $out = & .\dist\DrawToSTEP.exe --selftest
+          $out | Write-Host
+          if ($LASTEXITCODE -ne 0 -or ($out -notmatch "SELFTEST OK")) {
+            Write-Error "selftest failed (exit $LASTEXITCODE)"
+            exit 1
+          }
+
+      - name: Smoke test — headless build demo (STEP/STL via the frozen bundle)
+        run: |
+          $out = & .\dist\DrawToSTEP.exe --headless data\examples\flange_shaft_demo.pdf --out $env:RUNNER_TEMP\exe_headless
+          $out | Write-Host
+          if ($LASTEXITCODE -ne 0 -or ($out -notmatch "STEP:")) {
+            Write-Error "headless smoke failed (exit $LASTEXITCODE)"
+            exit 1
+          }
+
+      - name: Render Upload screen screenshot (for docs/artifacts)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          & .\dist\DrawToSTEP.exe --screenshot "$env:RUNNER_TEMP\exe_demo.png"
+          if ($LASTEXITCODE -ne 0) { Write-Error "screenshot failed" ; exit 1 }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DrawToSTEP-exe
+          path: dist/DrawToSTEP.exe
+          retention-days: 30
+
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe_demo-screenshot
+          path: ${{ runner.temp }}/exe_demo.png
+          retention-days: 30
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/DrawToSTEP.exe --clobber

@@ -1,9 +1,15 @@
 """DrawToSTEP entry point.
 
 GUI:      python -m app.main
+Demo:     python -m app.main --demo
+          Launches the app with the bundled example PDF pre-loaded (jury demo).
 Headless: python -m app.main --headless path/to/drawing.pdf|scan.png [--out exports]
           Runs the full offline pipeline (parse → recognize → solve → build →
           export STEP+STL) and prints a summary. Used by tests, demos and CI.
+Selftest: python -m app.main --selftest
+          Builds the main window, prints SELFTEST OK and exits (CI smoke test).
+Screenshot: python -m app.main --screenshot path.png
+          Renders the main window to a PNG and exits (offscreen-friendly).
 """
 
 from __future__ import annotations
@@ -20,13 +26,76 @@ def main() -> int:
                         help="run the pipeline without the GUI and export STEP/STL "
                              "(vector PDF or scanned image .png/.jpg/.tif/.bmp)")
     parser.add_argument("--out", default="exports", help="output directory (default: exports/)")
+    parser.add_argument("--demo", action="store_true",
+                        help="launch the app with the bundled example PDF pre-loaded (jury demo)")
+    parser.add_argument("--selftest", action="store_true",
+                        help="build the main window, print SELFTEST OK and exit (CI smoke test)")
+    parser.add_argument("--screenshot", metavar="PNG", default=None,
+                        help="render the main window to a PNG and exit")
     args = parser.parse_args()
 
     if args.headless:
         return _headless(Path(args.headless), Path(args.out))
+    if args.selftest:
+        return _selftest()
+    if args.screenshot:
+        return _screenshot(Path(args.screenshot))
+
+    demo_file = None
+    if args.demo:
+        from app.resources import demo_example_path
+        demo_file = str(demo_example_path())
 
     from app.ui.main_window import main as gui_main
-    return gui_main()
+    return gui_main(demo_file=demo_file)
+
+
+def _selftest() -> int:
+    """CI smoke test: construct the full window (no event loop)."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from app import theme
+    from app.ui.main_window import MainWindow
+
+    app = QApplication([])
+    app.setApplicationName("DrawToSTEP")
+    app.setStyleSheet(theme.stylesheet())
+    window = MainWindow()
+    assert window.stack.currentIndex() == 0, "upload screen must be first"
+    window.show()
+    print("SELFTEST OK")
+    return 0
+
+
+def _screenshot(out: Path) -> int:
+    """Render the main window to a PNG (offscreen-friendly, used for docs)."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    from app import theme
+    from app.ui.main_window import MainWindow
+
+    app = QApplication([])
+    app.setApplicationName("DrawToSTEP")
+    app.setStyleSheet(theme.stylesheet())
+    theme.dot_grid_pixmap()
+    window = MainWindow()
+    window.resize(1240, 800)
+    window.show()
+
+    def _grab() -> None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        window.grab().save(str(out))
+        print(f"screenshot: {out}")
+        app.quit()
+
+    QTimer.singleShot(600, _grab)  # let the layout settle
+    app.exec()
+    return 0
 
 
 def _headless(pdf: Path, out_dir: Path) -> int:

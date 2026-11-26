@@ -62,6 +62,25 @@ not solids. DrawToSTEP closes that gap for a narrow, well-defined class of parts
   <img src="docs/screenshots/viewer.png" width="49%" alt="3D viewer — revolve preview & STEP/STL export"/>
 </p>
 
+## Демо для защиты / Demo for defense (UMNIK)
+
+**Скачать `DrawToSTEP.exe`:** вкладка [Releases](../../releases) → последний релиз
+(артефакт собирается автоматически при публикации релиза, Windows x64, Python не нужен).
+Сборка из исходников: `pyinstaller --noconfirm DrawToSTEP.spec` (см. `.github/workflows/build-exe.yml`).
+
+30-секундный сценарий (полный скрипт с репликами — [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)):
+
+1. Запусти `DrawToSTEP.exe` (или `python -m app.main --demo`) — в окно **уже загружен пример** вала Ø50–Ø90–Ø40 (`--demo` пропускает выбор файла).
+2. Экран «Размеры»: 7 размеров, все уверенные (зелёные), масштаб определён автоматически (ГОСТ 2.302).
+3. «Подтвердить и собрать 3D» → вращай мышью → «Скачать .STEP» / «Скачать .STL».
+
+Скан-ветка: перетащи `data/examples/real/scan_test.png` (регенерируется
+`python data/examples/real/generate_real_examples.py`) — диаметры (RapidOCR теряет Ø)
+показываются как «Ø60 — предложено по геометрии — подтверди»: 1 клик «Подтвердить» ×4,
+и 3D собрана (погрешность объёма **+0.26 %**).
+
+![Upload screen](docs/screenshots/exe_demo.png)
+
 ## Быстрый старт / Quick start
 
 ```bash
@@ -74,7 +93,9 @@ pip install -r requirements.txt
 # Windows/macOS: отдельно ставить нечего
 
 # GUI (нужен дисплей; Linux: системные libGL/xkbcommon)
-python -m app.main
+python -m app.main            # GUI
+python -m app.main --demo     # GUI с предзагруженным примером (для жюри)
+python -m app.main --selftest # дымовой тест без окна (CI)
 ```
 
 Готовый пример чертежа уже в репозитории: **`data/examples/flange_shaft_demo.pdf`**
@@ -113,7 +134,7 @@ STEP-файл открывается в FreeCAD и в КОМПАС-3D (Файл 
 ## Тесты / Tests
 
 ```bash
-pytest                      # 38 тестов: парсер, солвер, CAD, OCR-правила, привязка размеров на сканах
+pytest                      # 55 тестов: парсер, солвер, CAD, OCR-правила, привязка размеров на сканах, Ø-recovery, бенчмарк сканов, демо-режим
 ```
 
 CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-прогон примера.

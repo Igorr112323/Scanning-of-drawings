@@ -99,8 +99,9 @@ class ScanWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, demo_file: str | None = None) -> None:
         super().__init__()
+        self._demo_file = demo_file
         self.setWindowTitle("DrawToSTEP")
         self.resize(1240, 800)
         self.setMinimumSize(1024, 640)
@@ -203,6 +204,9 @@ class MainWindow(QMainWindow):
         self._scan_nav_pending = False
 
         self._go_to("upload")
+        if self._demo_file:
+            # demo mode: skip the file dialog, open the bundled example
+            QTimer.singleShot(0, lambda: self._on_file_selected(self._demo_file))
 
     # ------------------------------------------------------------ top bar
     def _circle_button(self, icon, diameter: int) -> QToolButton:
@@ -407,12 +411,12 @@ class MainWindow(QMainWindow):
                 self._show_toast("STL сохранён")
 
 
-def main() -> int:
+def main(demo_file: str | None = None) -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("DrawToSTEP")
     app.setStyleSheet(theme.stylesheet())
     theme.dot_grid_pixmap()  # warm the tile cache
-    window = MainWindow()
+    window = MainWindow(demo_file=demo_file)
     window.show()
     return app.exec()
 
