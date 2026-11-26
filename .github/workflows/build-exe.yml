@@ -98,21 +98,49 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          $out = & .\dist\DrawToSTEP.exe --selftest
+          $report = Join-Path $env:TEMP "drawtostep_ci_report.txt"
+          Remove-Item $report -ErrorAction SilentlyContinue
+          $out = & .\dist\DrawToSTEP.exe --selftest 2>&1
+          $code = $LASTEXITCODE
+          Write-Host "exit code: $code"
           $out | Write-Host
-          if ($LASTEXITCODE -ne 0 -or ($out -notmatch "SELFTEST OK")) {
-            Write-Error "selftest failed (exit $LASTEXITCODE)"
-            exit 1
+          Write-Host "===== ci report file ====="
+          if (Test-Path $report) {
+            $i = 0
+            Get-Content $report | ForEach-Object {
+              $l = ($_ -replace '%', '%25') -replace '[\r\n]', ' '
+              if ($l.Trim()) {
+                if ($i -lt 30) { Write-Output ("::error::" + $l) }
+                Write-Host $l
+                $i++
+              }
+            }
+          } else {
+            Write-Host "(no report file written)"
+            Write-Output "::error::no ci report file — the exe likely crashed before python could report (native fault or Qt plugin failure)"
           }
+          if ($code -ne 0) { exit 1 }
 
       - name: Smoke test — headless build demo (STEP/STL via the frozen bundle)
         run: |
-          $out = & .\dist\DrawToSTEP.exe --headless data\examples\flange_shaft_demo.pdf --out $env:RUNNER_TEMP\exe_headless
+          $outDir = Join-Path $env:RUNNER_TEMP "exe_headless"
+          $out = & .\dist\DrawToSTEP.exe --headless data\examples\flange_shaft_demo.pdf --out $outDir 2>&1
+          $code = $LASTEXITCODE
+          Write-Host "exit code: $code"
           $out | Write-Host
-          if ($LASTEXITCODE -ne 0 -or ($out -notmatch "STEP:")) {
-            Write-Error "headless smoke failed (exit $LASTEXITCODE)"
+          $step = Join-Path $outDir "flange_shaft_demo.step"
+          $stl = Join-Path $outDir "flange_shaft_demo.stl"
+          if ($code -ne 0) {
+            Write-Output "::error::headless smoke failed with exit code $code"
             exit 1
           }
+          foreach ($f in @($step, $stl)) {
+            if (-not (Test-Path $f) -or ((Get-Item $f).Length -lt 1000)) {
+              Write-Output "::error::expected output missing or suspiciously small: $f"
+              exit 1
+            }
+          }
+          Write-Host "step: $((Get-Item $step).Length) bytes; stl: $((Get-Item $stl).Length) bytes"
 
       - name: Render Upload screen screenshot (for docs/artifacts)
         env:

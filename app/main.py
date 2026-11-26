@@ -50,21 +50,43 @@ def main() -> int:
     return gui_main(demo_file=demo_file)
 
 
+def _ci_report(kind: str, text: str) -> None:
+    """Windowed (console=False) frozen builds have no reliable stdout on Windows,
+    so CI smoke tests write a report file in the temp dir that the workflow
+    dumps as annotations."""
+    try:
+        import os
+        import tempfile
+        with open(os.path.join(tempfile.gettempdir(), "drawtostep_ci_report.txt"), "a",
+                  encoding="utf-8") as fh:
+            fh.write(f"== {kind} ==\n{text}\n")
+    except Exception:
+        pass
+
+
 def _selftest() -> int:
     """CI smoke test: construct the full window (no event loop)."""
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    try:
+        from PySide6.QtWidgets import QApplication
 
-    from app import theme
-    from app.ui.main_window import MainWindow
+        from app import theme
+        from app.ui.main_window import MainWindow
 
-    app = QApplication([])
-    app.setApplicationName("DrawToSTEP")
-    app.setStyleSheet(theme.stylesheet())
-    window = MainWindow()
-    assert window.stack.currentIndex() == 0, "upload screen must be first"
-    window.show()
+        app = QApplication([])
+        app.setApplicationName("DrawToSTEP")
+        app.setStyleSheet(theme.stylesheet())
+        window = MainWindow()
+        assert window.stack.currentIndex() == 0, "upload screen must be first"
+        window.show()
+    except BaseException:
+        import traceback
+        tb = traceback.format_exc()
+        _ci_report("SELFTEST FAILED", tb)
+        print(tb)
+        return 1
+    _ci_report("SELFTEST OK", "")
     print("SELFTEST OK")
     return 0
 
