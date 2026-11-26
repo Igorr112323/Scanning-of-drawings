@@ -438,8 +438,54 @@ def gen_scan() -> None:
     write_gt("scan_test", gt)
 
 
+
+
+def gen_scan_harsh() -> None:
+    """Second synthetic scan: different rotation and much heavier noise.
+
+    Exists to prove the real-scan harness (core/benchmark_real.py) works on
+    ANY scan, not just scan_test.png — same part geometry, worse acquisition.
+    Deterministic: seeded RNG (seed 20240522), 200 DPI, -4.0 degrees,
+    Gaussian noise sigma=24, slightly heavier blur.
+    """
+    import cv2
+    import fitz
+    from PIL import Image
+
+    with fitz.open(HERE / "shaft_3step_chamfer_bore.pdf") as doc:
+        pix = doc.load_page(0).get_pixmap(dpi=200)
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n).copy()
+        if pix.n == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+        elif pix.n != 3:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+
+    h, w = img.shape[:2]
+    # same caption blank-out trick as gen_scan (title feeds glyph strokes, not geometry)
+    cv2.rectangle(img, (0, 70), (400, 125), (255, 255, 255), thickness=-1)
+
+    angle = -4.0
+    matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    rotated = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_CUBIC,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+    rng = np.random.default_rng(20240522)
+    noise = rng.normal(0.0, 24.0, rotated.shape).astype(np.float32)
+    noisy = np.clip(rotated.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+    noisy = cv2.GaussianBlur(noisy, (3, 3), 0.9)
+
+    Image.fromarray(noisy).save(HERE / "scan_test_harsh.png", dpi=(200, 200))
+
+    source_gt = json.loads((HERE / "shaft_3step_chamfer_bore_ground_truth.json").read_text(encoding="utf-8"))
+    gt = dict(source_gt)
+    gt["generator"] = "render(source PDF, 200 DPI) + rotate -4.0 deg + gaussian noise sigma=24 + blur 0.9"
+    gt["source_file"] = "scan_test_harsh.png"
+    gt["scan"] = {"dpi": 200, "rotation_deg": -4.0, "noise_sigma": 24.0,
+                  "note": "harsh acquisition; harness must still run end-to-end"}
+    write_gt("scan_test_harsh", gt)
+
+
 def main() -> None:
-    gen_a(); gen_b(); gen_c(); gen_d(); gen_scan()
+    gen_a(); gen_b(); gen_c(); gen_d(); gen_scan(); gen_scan_harsh()
     print("real examples written to", HERE)
 
 

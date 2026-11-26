@@ -69,6 +69,19 @@ class ScanWorker(QThread):
             scaled_profile, contradictions = solve_constraints(
                 dimensions, drawing.profile, bore_diameter=drawing.bore_diameter,
                 linear_tol_mm=linear_tol, diameter_tol_mm=diameter_tol)
+            warnings = []
+            if dpi < 300.0:
+                warnings.append("Низкое качество скана — пересканируйте в 300 DPI, "
+                                "точность ~3 мм")
+            if scaled_profile:
+                profile_len = max(p.x for p in scaled_profile) - min(p.x for p in scaled_profile)
+                confident_linear = [d.value for d in dimensions
+                                    if d.symbol.name == "LINEAR" and not d.is_uncertain and d.value > 0]
+                if confident_linear and abs(max(confident_linear) - profile_len) > linear_tol:
+                    warnings.append(
+                        f"Расхождение напечатанной и измеренной длины "
+                        f"{abs(max(confident_linear) - profile_len):.1f} мм — "
+                        f"пересканируйте в 300 DPI")
             self.done.emit({
                 "file_path": self._path,
                 "drawing": drawing,
@@ -78,6 +91,7 @@ class ScanWorker(QThread):
                 "dimensions": dimensions,
                 "profile": scaled_profile if scaled_profile else drawing.profile,
                 "contradictions": contradictions,
+                "quality_warning": " · ".join(warnings) if warnings else None,
                 "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
             })
         except Exception as exc:  # surfaced to the user, never swallowed
@@ -327,6 +341,7 @@ class MainWindow(QMainWindow):
         }
 
         self.verification_screen.set_data(drawing, dimensions, contradictions)
+        self.verification_screen.set_quality_warning(None)
         self.processing_screen.start(Path(path).name)
         self._go_to("processing")
 
@@ -342,6 +357,7 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         self.verification_screen.set_data(result["drawing"], result["dimensions"],
                                           result["contradictions"])
+        self.verification_screen.set_quality_warning(result.get("quality_warning"))
         if self._scan_nav_pending or self.stack.currentIndex() == self._SCREENS["processing"]:
             self._go_to("verification")
         self._scan_nav_pending = False

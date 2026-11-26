@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.cad_builder import build_solid
-from core.models import ElementType, Symbol
+from core.models import CONFIDENCE_THRESHOLD, ElementType, Symbol
 from core.ocr_gost import recognize_dimensions
 from core.scan_pipeline import parse_scan
 
@@ -103,11 +103,15 @@ def test_outline_strokes_not_reclassified(scan_drawing):
             f"surface stroke {e.id} was reclassified to DIMENSION_LINE")
 
 
-def test_zero_led_diameters_stay_uncertain(scan_dims):
-    """Zero-led Ø reads (RapidOCR drops the Ø glyph) must never auto-apply."""
-    for raw in ("060", "040", "030", "012"):
+def test_zero_led_diameters_proposed_but_still_uncertain(scan_dims):
+    """Zero-led Ø reads are proposed from measured geometry (Ø<value>,
+    conf 0.85, proposed_by_geometry) but must never auto-apply."""
+    for raw, value in (("Ø60", 60.0), ("Ø40", 40.0), ("Ø30", 30.0), ("Ø12", 12.0)):
         d = next(x for x in scan_dims if x.raw_text == raw)
+        assert d.value == value
         assert d.is_uncertain, f"{raw} must stay uncertain until the user confirms"
+        assert d.proposed_by_geometry, f"{raw} should be proposed from geometry"
+        assert d.confidence <= CONFIDENCE_THRESHOLD
 
 
 def test_scan_volume_matches_ground_truth(scan_drawing):

@@ -79,6 +79,10 @@ class Dimension:
     linked_element_id: Optional[str]
     is_uncertain: bool
     anchor: Optional[tuple[float, float]] = None  # position of the text on the sheet
+    # Set by core.diameter_recovery when RapidOCR dropped the Ø glyph but the
+    # printed value matches the geometry-measured diameter: the user still
+    # confirms (one click), but no re-typing / click-to-link is needed.
+    proposed_by_geometry: bool = False
 
     def label(self) -> str:
         prefix = {

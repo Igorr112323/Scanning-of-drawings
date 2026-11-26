@@ -67,7 +67,8 @@ def _headless(pdf: Path, out_dir: Path) -> int:
           f"требуют проверки: {len(unconfirmed)})")
     for d in dimensions:
         flag = "НУЖЕН ВВОД" if d.is_uncertain else "ok"
-        print(f"  {d.label():<6} conf={d.confidence:.2f} {flag}  ({d.raw_text!r})")
+        proposed = " [предложено по геометрии]" if d.proposed_by_geometry else ""
+        print(f"  {d.label():<6} conf={d.confidence:.2f} {flag}  ({d.raw_text!r}){proposed}")
     for c in contradictions:
         print(f"  [{c.severity}] {c.message}")
     errors = [c for c in contradictions if c.severity == "error"]

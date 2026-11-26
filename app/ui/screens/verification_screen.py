@@ -184,7 +184,10 @@ class DimensionRow(QFrame):
             self.icon.setPixmap(icon_warn().pixmap(24, 24))
             self.title.setText(f"{dim.raw_text} — проверить")
             link = dim.linked_element_id or "нет привязки"
-            self.caption.setText(f"уверенность {dim.confidence:.2f} · {link}")
+            if dim.proposed_by_geometry:
+                self.caption.setText(f"предложено по геометрии — подтверди · {link}")
+            else:
+                self.caption.setText(f"уверенность {dim.confidence:.2f} · {link}")
             self.editor.setVisible(True)
             if self.editor.text() != dim.raw_text:
                 self.editor.setText(dim.raw_text)
@@ -342,6 +345,10 @@ class VerificationScreen(QWidget):
         header.addWidget(subtitle)
         right.addLayout(header)
 
+        self.quality_banner = QLabel()
+        self.quality_banner.setWordWrap(True)
+        self.quality_banner.setVisible(False)
+        right.addWidget(self.quality_banner)
         self.banner = QLabel()
         self.banner.setWordWrap(True)
         self.banner.setVisible(False)
@@ -383,9 +390,21 @@ class VerificationScreen(QWidget):
         self.installEventFilter(self)
 
     # ------------------------------------------------------------------
+    def set_quality_warning(self, text: str | None) -> None:
+        """Оранжевый баннер о качестве скана (низкий DPI / большая погрешность)."""
+        if text:
+            self.quality_banner.setText("⚠ " + text)
+            self.quality_banner.setStyleSheet(
+                "background: #FFE8CC; color: #8a4b00; border-radius: 14px; padding: 10px 14px; "
+                "font-size: 12px; font-weight: 600;")
+            self.quality_banner.setVisible(True)
+        else:
+            self.quality_banner.setVisible(False)
+
     def set_data(self, drawing, dimensions: list[Dimension], contradictions=()) -> None:
         self._source_path = drawing.source_path
         self._contradictions = [(c.severity, c.message) for c in contradictions]
+        self.set_quality_warning(None)
         self._drawing = drawing
         self._exit_link_mode()
         self._marks = []

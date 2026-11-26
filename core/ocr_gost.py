@@ -420,6 +420,10 @@ def recognize_dimensions(drawing: Drawing) -> list[Dimension]:
             anchor=anchor,
         ))
         idx += 1
+    # Zero-led Ø reads whose value matches the measured geometry are proposed
+    # as "Ø<value>" (confidence 0.85, still uncertain — never auto-applied).
+    from core.diameter_recovery import propose_geometry_bound_diameters
+    dimensions = propose_geometry_bound_diameters(dimensions, drawing)
     return dimensions
 
 
