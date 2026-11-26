@@ -97,24 +97,22 @@ jobs:
       - name: Smoke test — exe starts, Upload screen first
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: "1"
         run: |
           $report = Join-Path $env:TEMP "drawtostep_ci_report.txt"
           Remove-Item $report -ErrorAction SilentlyContinue
           $out = & .\dist\DrawToSTEP.exe --selftest 2>&1
           $code = $LASTEXITCODE
           Write-Host "exit code: $code"
-          $out | Write-Host
+          function Emit($line) {
+            $l = ($line -replace '%', '%25') -replace '[\r\n]', ' '
+            if ($l.Trim()) { Write-Output ("::error::" + $l) }
+          }
+          $i = 0
+          $out | ForEach-Object { if ($i -lt 25) { Emit $_; $i++ } }
           Write-Host "===== ci report file ====="
           if (Test-Path $report) {
-            $i = 0
-            Get-Content $report | ForEach-Object {
-              $l = ($_ -replace '%', '%25') -replace '[\r\n]', ' '
-              if ($l.Trim()) {
-                if ($i -lt 30) { Write-Output ("::error::" + $l) }
-                Write-Host $l
-                $i++
-              }
-            }
+            Get-Content $report | ForEach-Object { Write-Host $_; Emit $_ }
           } else {
             Write-Host "(no report file written)"
             Write-Output "::error::no ci report file — the exe likely crashed before python could report (native fault or Qt plugin failure)"
