@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run pytest
-        run: pytest -v
+        run: python -m pytest -v
 
       - name: Headless vertical slice (example PDF → STEP)
         run: python -m app.main --headless data/examples/flange_shaft_demo.pdf --out /tmp/exports
