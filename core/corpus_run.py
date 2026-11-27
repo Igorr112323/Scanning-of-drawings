@@ -234,40 +234,43 @@ def _process_file(path: Path, gt_step: Path | None) -> dict:
 
     t0 = time.perf_counter()
     try:
-        from core.pdf_parser import parse_pdf
-        from core.ocr_gost import recognize_dimensions
-        from core.constraint_solver import solve_constraints
         from core.cad_builder import build_solid
+        from core.constraint_solver import (
+            estimate_scale,
+            scan_diameter_tol_mm,
+            scan_linear_tol_mm,
+            solve_constraints,
+        )
+        from core.ocr_gost import recognize_dimensions
+        from core.pdf_parser import parse_pdf
+        from core.scan_pipeline import _DEFAULT_DPI, parse_scan, read_dpi
 
         suffix = path.suffix.lower()
         if suffix == ".pdf":
+            linear_tol = diameter_tol = None
             drawing = parse_pdf(path)
+            ocr_note = None
         else:
-            # raster path: preprocess → vectorize → (OCR) → synthetic Drawing
-            import cv2
-
-            from core.models import Drawing
-            from core.scan_preprocess import preprocess_scan
-            from core.vectorize import vectorize
-            from core.pdf_parser import _build_profile, _find_axis_y
-
-            image = cv2.imread(str(path))
-            cleaned = preprocess_scan(image)
-            elements = list(vectorize(cleaned))
+            dpi = read_dpi(path) or _DEFAULT_DPI
+            linear_tol, diameter_tol = scan_linear_tol_mm(dpi), scan_diameter_tol_mm(dpi)
             try:
-                from core.ocr_gost import ocr_words
-                elements = elements + list(ocr_words(cleaned))
-            except BaseException:
-                pass  # OCR unavailable — dims stay unknown, solid can still revolve
-            h, w = cleaned.shape
-            axis_y = _find_axis_y(elements, float(h))
-            profile = _build_profile(elements, axis_y) if axis_y is not None else []
-            drawing = Drawing(source_path=str(path), page_width=float(w),
-                              page_height=float(h), elements=elements, profile=profile)
+                drawing = parse_scan(path, dpi=dpi, ocr=True)
+                ocr_note = None
+            except RuntimeError as exc:
+                # no local OCR engine — degrade honestly: geometry only, no dims
+                drawing = parse_scan(path, dpi=dpi, ocr=False)
+                ocr_note = f"ocr_unavailable: {exc}"
 
         dimensions = recognize_dimensions(drawing)
-        scaled, contradictions = solve_constraints(dimensions, drawing.profile)
+        scaled, contradictions = solve_constraints(
+            dimensions, drawing.profile,
+            bore_diameter=drawing.bore_diameter,
+            linear_tol_mm=linear_tol,
+            diameter_tol_mm=diameter_tol,
+        )
         parse_s = time.perf_counter() - t0
+        if ocr_note:
+            record["notes"] = [ocr_note]
         record["parsing_time_s"] = round(parse_s, 3)
         record["dims_total"] = len(dimensions)
         record["dims_confident"] = sum(1 for d in dimensions if not d.is_uncertain)
@@ -284,9 +287,14 @@ def _process_file(path: Path, gt_step: Path | None) -> dict:
             record["status"] = STATUS_CONTRADICTION
             return record
 
+        scale = estimate_scale(dimensions, drawing.profile, linear_tol_mm=linear_tol)
+        bore_true = drawing.bore_diameter * scale if drawing.bore_diameter else None
+        record["scale"] = scale
+        record["bore_diameter_true_mm"] = bore_true
+        record["proposed_by_geometry"] = sum(1 for d in dimensions if getattr(d, "proposed_by_geometry", False))
         build_t0 = time.perf_counter()
         try:
-            solid = build_solid(scaled, dimensions)
+            solid = build_solid(scaled, dimensions, bore_diameter=bore_true)
         except BaseException as exc:
             record["status"] = STATUS_BUILD_FAIL
             record["error_signature"] = normalize_error_signature(type(exc).__name__, str(exc))

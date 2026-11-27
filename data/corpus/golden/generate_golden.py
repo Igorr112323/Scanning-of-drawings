@@ -48,26 +48,30 @@ def draw_golden(path: Path, steps: list[tuple[float, float]], title: str) -> Non
     total_len = steps[-1][0]
 
     # ---- contour: thick stroke (parser treats width >= 1.2pt as contour) ----
-    # NB: the parser keeps the half-profile with y < axis_y in fitz coordinates,
-    # which is the visually UPPER half — draw the half-profile above the axis.
+    # Full symmetric outline (GOST full view of a stepped shaft): the parser
+    # keeps one half for the profile; both halves are drawn so the
+    # mirror-symmetry screen and the arrow-direction dimension linker have
+    # real evidence to work with.
     c.setLineWidth(1.6)
     c.setDash([], 0)
-    # left end face
-    c.line(x_origin, axis_y, x_origin, axis_y + steps[0][1] * MM)
-    # horizontal segments
-    x_bounds = [0.0] + [x for x, _ in steps]
-    for i, r in enumerate([r for _, r in steps]):
-        xa, xb = x_bounds[i], x_bounds[i + 1]
-        y = axis_y + r * MM
-        c.line(x_origin + xa * MM, y, x_origin + xb * MM, y)
-    # vertical shoulders between consecutive steps
-    for i in range(1, len(steps)):
-        x = x_origin + steps[i - 1][0] * MM
-        y0, y1 = axis_y + steps[i][1] * MM, axis_y + steps[i - 1][1] * MM
-        c.line(x, min(y0, y1), x, max(y0, y1))
-    # right end face
-    x_end = x_origin + total_len * MM
-    c.line(x_end, axis_y, x_end, axis_y + steps[-1][1] * MM)
+    max_r_pt = max(r for _, r in steps) * MM
+    for sign in (1.0, -1.0):
+        # left end face
+        c.line(x_origin, axis_y, x_origin, axis_y + sign * steps[0][1] * MM)
+        # horizontal segments
+        x_bounds = [0.0] + [x for x, _ in steps]
+        for i, r in enumerate([r for _, r in steps]):
+            xa, xb = x_bounds[i], x_bounds[i + 1]
+            y = axis_y + sign * r * MM
+            c.line(x_origin + xa * MM, y, x_origin + xb * MM, y)
+        # vertical shoulders between consecutive steps
+        for i in range(1, len(steps)):
+            x = x_origin + steps[i - 1][0] * MM
+            y0, y1 = axis_y + sign * steps[i][1] * MM, axis_y + sign * steps[i - 1][1] * MM
+            c.line(x, min(y0, y1), x, max(y0, y1))
+        # right end face
+        x_end = x_origin + total_len * MM
+        c.line(x_end, axis_y, x_end, axis_y + sign * steps[-1][1] * MM)
 
     # ---- GOST dash-dot axis ----
     c.setLineWidth(0.6)
@@ -75,13 +79,46 @@ def draw_golden(path: Path, steps: list[tuple[float, float]], title: str) -> Non
     c.line(x_origin - 40, axis_y, x_end + 40, axis_y)
     c.setDash([], 0)
 
-    # ---- dimension texts: Ø of each step, overall length below axis ----
+    # ---- dimensions GOST style: vertical diameter lines + arrowheads, ---
+    # ---- extension lines + overall-length line with arrowheads ----
+    def arrowhead(tip_x_pt, tip_y_pt, angle_rad, size_pt=7.0):
+        p1 = (tip_x_pt, tip_y_pt)
+        p2 = (tip_x_pt - size_pt * math.cos(angle_rad - 0.42), tip_y_pt - size_pt * math.sin(angle_rad - 0.42))
+        p3 = (tip_x_pt - size_pt * math.cos(angle_rad + 0.42), tip_y_pt - size_pt * math.sin(angle_rad + 0.42))
+        path = c.beginPath()
+        path.moveTo(*p1)
+        path.lineTo(*p2)
+        path.lineTo(*p3)
+        path.close()
+        c.setFillColorRGB(0, 0, 0)
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(0.4)
+        c.drawPath(path, fill=1, stroke=0)
+
+    def thin_line(x0, y0, x1, y1):
+        c.setLineWidth(0.6)
+        c.setDash([], 0)
+        c.line(x0, y0, x1, y1)
+
+    x_end = x_origin + total_len * MM
     c.setFont("Helvetica", 11)
     for i, (x1, r) in enumerate(steps):
         xa = 0.0 if i == 0 else steps[i - 1][0]
         cx = x_origin + (xa + x1) / 2.0 * MM
-        c.drawCentredString(cx, axis_y + r * MM + 10, f"Ø{2 * r:g}")
-    c.drawCentredString(x_origin + total_len * MM / 2, axis_y - 24, f"{total_len:g}")
+        top, bot = axis_y + r * MM, axis_y - r * MM
+        thin_line(cx, bot, cx, top)
+        arrowhead(cx, top, math.pi / 2)
+        arrowhead(cx, bot, -math.pi / 2)
+        c.drawCentredString(cx, top + 10, f"Ø{2 * r:g}")
+
+    # extension lines from end faces down to the overall-length dimension line
+    dim_y = axis_y - max_r_pt - 42
+    thin_line(x_origin, axis_y - steps[0][1] * MM - 4, x_origin, dim_y - 6)
+    thin_line(x_end, axis_y - steps[-1][1] * MM - 4, x_end, dim_y - 6)
+    thin_line(x_origin, dim_y, x_end, dim_y)
+    arrowhead(x_origin, dim_y, 0.0)
+    arrowhead(x_end, dim_y, math.pi)
+    c.drawCentredString(x_origin + total_len * MM / 2, dim_y - 15, f"{total_len:g}")
 
     c.setFont("Helvetica", 8)
     c.drawString(60, 30, title)
