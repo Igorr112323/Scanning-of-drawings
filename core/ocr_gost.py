@@ -50,6 +50,27 @@ _CONFUSABLE = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "S": "5", "
 # zero-led integer, no decimal dot: "040" — RapidOCR lost the Ø glyph
 _ZERO_LED_DIA = re.compile(r"^0(?P<num>\d{1,4}(?:[.,]\d{1,4})?)$")
 
+# Tolerance suffixes on an otherwise plain dimension: "40±0.05", "Ø40h6",
+# "120±0,2", "Ø40±0.1". Strip iteratively (at most two suffix groups); the
+# stripped stem is parsed normally but confidence is capped below the
+# auto-accept threshold — the human confirms, as with every uncertain dim.
+# Lookbehind keeps "M20" safe (letter must FOLLOW a digit).
+_TOL_PLUSMINUS = re.compile(r"\s*(±|\+|−|-)\s*\d{1,4}([.,]\d{1,4})?$")
+_TOL_CLASS = re.compile(r"(?<=[0-9])(h|H|js|JS|j|J|k|K|m|M|n|N|p|P|r|R|s|S|t|T|u|U|v|V|x|X|y|Y|z|Z|g|G|e|E|f|F)\s*\d{1,3}$")
+
+
+def _strip_tolerance_suffixes(t: str) -> tuple[str, bool]:
+    """Return (stem, stripped?). At most three strip iterations."""
+    stripped = False
+    for _ in range(3):
+        stem = _TOL_PLUSMINUS.sub("", t)
+        stem = _TOL_CLASS.sub("", stem).rstrip()
+        if stem == t:
+            break
+        stripped = True
+        t = stem
+    return t, stripped
+
 # how far (mm) from the text anchor we still consider an element linked
 _LINK_RADIUS_MM = 9.0
 # beyond this distance even a clean pattern is downgraded
@@ -71,6 +92,9 @@ def parse_dimension_text(text: str) -> tuple[Symbol, float, float] | None:
     confusions had to be resolved (→ uncertain).
     """
     t = text.strip().strip(";,.")
+    if not t:
+        return None
+    t, tol_stripped = _strip_tolerance_suffixes(t)
     if not t:
         return None
 
@@ -97,7 +121,8 @@ def parse_dimension_text(text: str) -> tuple[Symbol, float, float] | None:
         num = _parse_number(m.group("num"))
         if num is None:
             return None
-        return _symbol(m.group("prefix")), num, 0.95
+        conf = 0.7 if tol_stripped else 0.95
+        return _symbol(m.group("prefix")), num, conf
 
     m = _LOOSE_NUM.match(t)
     if m:
