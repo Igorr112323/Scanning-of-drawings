@@ -127,6 +127,12 @@ def _http_get(url: str, timeout: float) -> bytes:
         return resp.read()
 
 
+def _http_get_with_headers(url: str, timeout: float) -> tuple[bytes, dict[str, str]]:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — URLs come from the committed registry
+        return resp.read(), dict(resp.headers)
+
+
 def _http_get_json(url: str, timeout: float):
     return json.loads(_http_get(url, timeout).decode("utf-8"))
 
@@ -314,16 +320,57 @@ def _find_downloaded_pdf(out_dir: Path, plan: list[dict]) -> Path | None:
 # --------------------------------------------------------------------------- #
 # hugging face                                                                 #
 # --------------------------------------------------------------------------- #
-def hf_list_files(api_tree_url: str, http_get_json=_http_get_json) -> list[dict]:
-    """List all files in an HF dataset repo (handles pagination)."""
-    url = api_tree_url + ("?expand=false" if "?" not in api_tree_url else "&expand=false")
+_LINK_NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+
+
+def hf_list_files(api_tree_url: str, http_get_json=None) -> list[dict]:
+    """List all files in an HF dataset repo.
+
+    Pagination follows the RFC 5988 ``Link: rel="next"`` header the HF tree
+    API emits (verified live: ``hasMore: true`` in the JSON body, page size
+    ~50 rows/request regardless of ``limit``). The flat repo layout is used
+    as-is; directories (if any) are walked one level deep.
+    """
     files: list[dict] = []
-    while url:
-        page = http_get_json(url, 60)
+    base = api_tree_url.rstrip("/")
+
+    def _fetch(url: str) -> tuple[list, dict[str, str]]:
+        if http_get_json is not None:  # test hook — JSON only, single page
+            page = http_get_json(url, 60)
+            if not isinstance(page, list):
+                raise RuntimeError(f"unexpected HF tree response from {url}")
+            return page, {}
+
+        def _get(u: str):
+            body, headers = _http_get_with_headers(u, 60)
+            return json.loads(body.decode("utf-8")), headers
+
+        page, headers = _with_retries(_get, 3, 1.0, url)
         if not isinstance(page, list):
             raise RuntimeError(f"unexpected HF tree response from {url}")
-        files.extend([f for f in page if f.get("type") == "file"])
-        url = None
+        return page, headers
+
+    def _walk(url: str) -> None:
+        seen_next: set[str] = set()
+        current: str | None = url
+        while current:
+            page, headers = _fetch(current)
+            for item in page:
+                if item.get("type") == "file":
+                    files.append(item)
+                elif item.get("type") == "directory" and item.get("path"):
+                    _walk(f"{base}/{item['path']}?expand=false")
+            nxt = None
+            m = _LINK_NEXT_RE.search(headers.get("Link") or headers.get("link") or "")
+            if m:
+                nxt = m.group(1)
+            if nxt and nxt not in seen_next:
+                seen_next.add(nxt)
+                current = nxt
+            else:
+                current = None
+
+    _walk(f"{base}?expand=false")
     return files
 
 
@@ -340,7 +387,7 @@ def _fetch_hf(args, out_dir: Path, writer: _ManifestWriter, manifest_path: Path,
     timeout = args.timeout
     if args.dry_run:
         try:
-            files = hf_list_files(src["hf_api_tree"], lambda u, t: _with_retries(lambda x: _http_get_json(x, t), args.retries, 1.0, x))
+            files = hf_list_files(src["hf_api_tree"])
         except Exception as exc:
             print(f"DRY-RUN: cannot list remote files ({exc}); the plan would be: list '{src['hf_api_tree']}', download every *{'/'.join(wanted)} up to --limit {args.limit}")
             return 0
@@ -351,7 +398,7 @@ def _fetch_hf(args, out_dir: Path, writer: _ManifestWriter, manifest_path: Path,
         return 0
 
     try:
-        files = hf_list_files(src["hf_api_tree"], lambda u, t: _with_retries(lambda x: _http_get_json(x, t), args.retries, 1.0, x))
+        files = hf_list_files(src["hf_api_tree"])
     except Exception as exc:
         print(f"ERROR: cannot list {source_key}: {exc}", file=sys.stderr)
         return 3

@@ -36,6 +36,11 @@ AXIS_MIN = 0.6
 RASTER_AXIS_MIN = 0.5
 MIN_IMAGE_SIDE = 640      # px — quality gate for scans
 MIRROR_TOL_MM = 1.0       # mirror-match tolerance between halves
+CHAIN_MIN_PIECES = 4      # collinear pieces needed for a dash-dot chain
+CHAIN_MAX_GAP_MM = 8.0    # GOST dash-dot gaps are 1.5–3 mm; 8 mm is generous
+CHAIN_MIN_COVERAGE = 0.45 # dash-dot cadence is ~70-80% coverage
+CHAIN_Y_BAND_MM = 0.75    # segments in the same y band belong to one chain
+CHAIN_AXIS_SPAN = 0.45    # chain must span at least this fraction of the page width
 
 _DIM_RE = re.compile(r"^(Ø|⌀|∅|Φ|%%c|R|M)?\s*\d{1,4}([.,]\d{1,4})?(\s*[xхX×].*)?$", re.IGNORECASE)
 _DIA_RE = re.compile(r"(Ø|⌀|∅|Φ|%%c)", re.IGNORECASE)
@@ -175,6 +180,7 @@ def classify_pdf(path: str | Path) -> Evidence:
     solid: list[tuple[float, float, float, float]] = []   # x0,y0,x1,y1
     dashed: list[tuple[float, float, float, float]] = []
     all_boxes: list[tuple[float, float, float, float]] = []
+    horiz_all: list[tuple[float, float, float]] = []  # x0, y_mid, x1 (mm), any width
     for drawing in drawings:
         width_pt = drawing.get("width") or 0.0
         is_dash = classify_dash((drawing.get("dashes") or "").strip())
@@ -182,6 +188,12 @@ def classify_pdf(path: str | Path) -> Evidence:
             if item[0] == "re":
                 r = item[1]
                 all_boxes.append((r.x0 * MM_PER_PT, r.y0 * MM_PER_PT, r.x1 * MM_PER_PT, r.y1 * MM_PER_PT))
+                # wide rects contribute their top/bottom edges as horizontal ink
+                if r.width >= r.height:
+                    y_top, y_bot = r.y0 * MM_PER_PT, r.y1 * MM_PER_PT
+                    horiz_all.append((r.x0 * MM_PER_PT, y_top, r.x1 * MM_PER_PT))
+                    if (y_bot - y_top) > 0.5:
+                        horiz_all.append((r.x0 * MM_PER_PT, y_bot, r.x1 * MM_PER_PT))
                 continue
             if item[0] != "l":
                 continue
@@ -189,6 +201,7 @@ def classify_pdf(path: str | Path) -> Evidence:
             x0, y0, x1, y1 = p1.x * MM_PER_PT, p1.y * MM_PER_PT, p2.x * MM_PER_PT, p2.y * MM_PER_PT
             all_boxes.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
             if abs(y1 - y0) <= 0.5:
+                horiz_all.append((min(x0, x1), (y0 + y1) / 2.0, max(x0, x1)))
                 target = dashed if is_dash else (solid if width_pt >= 1.2 else None)
                 if target is not None:
                     target.append((x0, y0, x1, y1))
@@ -197,9 +210,35 @@ def classify_pdf(path: str | Path) -> Evidence:
         ev.reason = "blank page: no stroked geometry and no text"
         return ev
 
+    def _chain_axis(horiz: list[tuple[float, float, float]], page_width: float):
+        """GOST centre lines whose dashes/dots are exported as separate thin
+        segments carry no dash attribute at all — detect the collinear chain
+        itself: ≥4 pieces in one y band, small gaps, long extent."""
+        bands: dict[int, list[tuple[float, float]]] = {}
+        for x0, y, x1 in horiz:
+            bands.setdefault(round(y / CHAIN_Y_BAND_MM), []).append((x0, x1))
+        best = None
+        for band, segs in bands.items():
+            segs.sort()
+            if len(segs) < CHAIN_MIN_PIECES:
+                continue
+            span = segs[-1][1] - segs[0][0]
+            if span < CHAIN_AXIS_SPAN * page_width:
+                continue
+            gaps = [segs[i + 1][0] - segs[i][1] for i in range(len(segs) - 1)]
+            if gaps and max(gaps) > CHAIN_MAX_GAP_MM:
+                continue
+            covered = sum(x1 - x0 for x0, x1 in segs)
+            if covered / span < CHAIN_MIN_COVERAGE:
+                continue
+            if best is None or span > best[1]:
+                best = (band * CHAIN_Y_BAND_MM, span)
+        return best
+
     # --- axis: longest dashed horizontal span, capped at 1.0
     axis_y = None
     axis_span = 0.0
+    sym_segments: list[tuple[float, float, float, float]] = [(x0, y, x1, y) for x0, y, x1 in horiz_all]
     if dashed:
         longest = max(dashed, key=lambda s: abs(s[2] - s[0]))
         axis_span = abs(longest[2] - longest[0])
@@ -207,10 +246,15 @@ def classify_pdf(path: str | Path) -> Evidence:
         axis_y = (longest[1] + longest[3]) / 2.0
     elif any(abs(s[2] - s[0]) > 0.45 * page_w for s in solid):
         ev.axis_score = 0.3  # long solid horizontal: weak evidence only
+    if axis_y is None:
+        chain = _chain_axis(horiz_all, page_w)
+        if chain is not None:
+            axis_y, axis_span = chain
+            ev.axis_score = round(min(1.0, axis_span / (CHAIN_AXIS_SPAN * page_w) * 0.6), 3)
 
     # --- revolution-layout evidence (mirror or one-sided coverage)
     if axis_y is not None:
-        ev.symmetry_score = round(_symmetry(solid, axis_y, axis_span), 3)
+        ev.symmetry_score = round(_symmetry(sym_segments, axis_y, axis_span), 3)
 
     ev.views_count = _views_count(all_boxes)
 
