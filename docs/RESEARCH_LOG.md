@@ -206,6 +206,56 @@ Lesson, third time: furniture must die on **every** detection path, not only
 the one that trips first. Numerical guards on one path while the sibling
 path stays naive just move the crash two commits later.
 
+## 3d. Post-mortem #4 — gap root cause RESOLVED by direct ink evidence (runs `46061160665` (`57a44fb`), `46062918240` (`41e2a44`))
+
+The NO_DIMS gap forensics (commit `cabaffc`+) showed each revolution candidate
+failing inside `build_half_profile` at ONE uncovered x-interval, with ink
+present but un-covering:
+
+| page | gap x (mm) | in-gap ink | above-axis horizontal CONTOUR runs | verdict |
+|---|---|---|---|---|
+| page_001 | [48.2, 69.9] | 242 elems (132 thin / 110 CONTOUR, max 0.508 mm) | none crosses mid; fragments ≤ 3.32 mm, mostly vertical/fragments (h=14 v=108) | unrecoverable without outline invention |
+| page_010 | [219.8, 301.8] | 137 elems (74 CONTOUR / 63 thin) | none crosses mid; fragments ≤ 5.99 mm (h=16 v=70) | same; the interval also covers the second-view start (x≈283 mm) |
+| page_039 | [91.8, 99.3] | 370 elems (319 CONTOUR / 51 thin) | none crosses mid; fragments ≤ 4.51 mm (h=197 v=285) | same |
+
+The ink bitmaps (annotations DIAG-INK-page_010 / DIAG-INK-page_039, 42 dpi,
+`#`=dark) confirm: the upper half at the gap contains only short fragments and
+one full-height vertical stroke (scan seam/edge artifact, x≈91.5 mm on
+page_039 — spans the whole sheet height, far beyond any part shoulder); the
+lower half is equally empty; the dense dark band at the bottom of both sheets
+is the GOST title-block furniture/border — not part ink.
+
+**Classification is NOT the blocker**: half the ink in the gaps is classified
+CONTOUR (max width 0.508 mm ≥ 0.423 mm threshold). The horizontal runs that
+should bridge the interval simply do not exist in the scan — traced-sheet
+white dropouts (scan glare/threshold loss) plus seam artifacts. Mirror-
+completing the upper half from the lower half is impossible: the lower half
+at the same x-interval is equally empty on all three pages. Fabricating the
+outline between surrounding anchors would violate the no-guessing rule; the
+pipeline correctly refuses.
+
+**Honest outcome (measured, all three candidates): NO_DIMS.**
+3/3 selected revolution sheets fail reconstruction for data-quality reasons,
+not code reasons. No solid is buildable ⇒ no Tier A comparison ⇒ accuracy
+NOT MEASURED. The funnel bottom line stands.
+
+Infra notes: artifact downloads and job-log downloads are egress-blocked
+(blob.core.windows.net / results-receiver.actions.githubusercontent.com →
+EOF); the annotation channel (api.github.com) is the only telemetry path.
+The sandbox workspace was also reset externally (root checkout reverted to an
+untracked PR-#7-era snapshot; `corpus-work` worktree wiped — all corpus work
+was safe on `origin/feat/corpus-1000` because every state was pushed before
+the reset). Worktree restored from `origin/feat/corpus-1000`; the root
+checkout was re-aligned to `origin/arena/9c5dece9-scanning-of-drawings`
+(PR #7 tip, `ffb451b`) with the stale untracked snapshot backed up at
+`/tmp/wt-backup-2026-11-27.tar.gz` (its unique README edit is preserved there;
+the corpus branch never depended on it).
+
+Reconciliations: `corpus: 80 file(s)` in the run log vs manifest 82 ⇒ the
+multi-page archive container (now excluded) + the excluded `golden/` fixture
+tree — no longer a discrepancy. page_001 wall_s ≈ 60–87 s is the parse cost of
+3464 elements; fine within the 120 s worker cap.
+
 ## 4. Measured funnel (commit `339b96e`, check-run `140445276543`, 2026-11-26)
 
 | step | count | denominator / note |
