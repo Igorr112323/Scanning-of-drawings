@@ -152,6 +152,34 @@ pipeline re-measured. New funnel: **81 screened → 2 BODY_OF_REVOLUTION**
 - **Multi-page PDFs are now excluded from screening** (the zenodo archive PDF
   screens page 1 only, duplicating page_001); regression tests added.
 
+## 3b. Post-mortem #2 — annotation cap, archive double-processing, 'qu' crash (run `45991993567`, commit `7ac6c76`; and run `45994637154`, commit `cabaffc`)
+
+**b713040 → 7ac6c76 (screen telemetry):**
+- Raster symmetry resurrected candidates: **page_001 (v=1, sym=0.72),
+  page_010 (v=2, sym=0.71), page_033 (sym=0.50 — below the 0.55 gate),
+  page_039 (v=2→1 after frame fix, sym=0.60, ax=0.74)**. Furniture pages
+  (axis≡0.700 @ y≈282.4) dropped to axis=0.000 — those verdicts are now
+  honest absences, not suppressed evidence.
+- **Frame exclusion verified**: every page's dominant cluster is gone
+  (page_001 views 2→1; page_034 4 (others); page_039 3→2).
+- **Bottom-strip guard verified**: no more axis=0.700 anywhere; genuine axes
+  remain (page_001 y=217.7 span=236.8; page_033 y=135.2 span=233.3; page_010
+  y=86.8 span=195.2).
+
+**cabaffc run:**
+- Screen: **80 screened → 3 BODY_OF_REVOLUTION** (page_001, page_010,
+  page_039), 1 NO_DIMENSIONS, jcrzd 40× NOT_SUPPORTED. Pipeline selected **4**
+  files — the archive PDF crept back in: `_find_corpus_files` defaults
+  unscreened ids to BODY_OF_REVOLUTION (fail-open) and did not skip
+  multi-page containers. **Fixed in the next push: `_find_corpus_files` now
+  skips multi-page PDFs (same rule as the screen).**
+- **All 4 candidates CRASHed: `IndexError: tuple index out of range`,
+  dims=0/0.** Root cause: fitz `qu` items are **Quads** (ul/ur/ll/lr corners),
+  not quadratic Beziers — my `_quad_chords(item[1..3])` indexed non-existent
+  control points. `c` items are 5-tuples and were handled correctly. Fixed:
+  `qu` → closed 4-edge shape (like `re`); `_quad_chords` removed; regression
+  test `test_quad_item_parsed_as_closed_shape`. Local: 145 passed.
+
 ## 4. Measured funnel (commit `339b96e`, check-run `140445276543`, 2026-11-26)
 
 | step | count | denominator / note |

@@ -171,10 +171,20 @@ def _symmetry(segments: list[tuple[float, float, float, float]], axis_y: float,
       one-sided profile coverage: horizontal ink span on the inked side as a
       fraction of the axis span.
     """
+    import numpy as np
+
     above = [abs(axis_y - s[1]) for s in segments if s[1] < axis_y - 0.5]
     below = [abs(s[1] - axis_y) for s in segments if s[1] > axis_y + 0.5]
     if above and below:
-        return sum(1 for r in above if min(abs(b - r) for b in below) < MIRROR_TOL_MM) / len(above)
+        # O(n log n): per upper radius, nearest lower radius via bisect —
+        # the naive O(n²) cost minutes on traced pages (97k strokes)
+        a = np.sort(np.asarray(above, dtype=np.float64))
+        b = np.sort(np.asarray(below, dtype=np.float64))
+        idx = np.searchsorted(b, a)
+        left = b[np.clip(idx - 1, 0, len(b) - 1)]
+        right = b[np.clip(idx, 0, len(b) - 1)]
+        dist = np.minimum(np.abs(a - left), np.abs(a - right))
+        return float((dist < MIRROR_TOL_MM).mean())
     side = above or below
     if not side or axis_span <= 0:
         return 0.0

@@ -115,10 +115,6 @@ def _cubic_chords(p0, c1, c2, p3, tol_pt: float = 0.3, max_depth: int = 12) -> l
     return out
 
 
-def _quad_chords(p0, cc, p2, tol_pt: float = 0.3, max_depth: int = 12) -> list:
-    """Adaptive flattening of a quadratic Bezier (fitz 'qu' items)."""
-    out: list = []
-
     def rec(a, c, b, depth: int) -> None:
         if depth >= max_depth or _dist_point_chord(c, a, b) <= tol_pt:
             out.append(b)
@@ -193,15 +189,21 @@ def parse_pdf(path: str | Path) -> Drawing:
                 for a, b in zip(pts, pts[1:]):
                     elements.append(_line_element(_uid("L", n), a, b, width, dash))
                     n += 1
-            elif item[0] in ("c", "qu"):
-                # flatten Bezier/arcs to chords — GOST traced outlines draw
+            elif item[0] == "c":
+                # flatten cubic Beziers to chords — GOST traced outlines draw
                 # fillets as curves; ignoring them broke outline coverage
-                if item[0] == "c":
-                    chord_pts = [item[1]] + _cubic_chords(item[1], item[2], item[3], item[4])
-                else:
-                    chord_pts = [item[1]] + _quad_chords(item[1], item[2], item[3])
+                chord_pts = [item[1]] + _cubic_chords(item[1], item[2], item[3], item[4])
                 for a, b in zip(chord_pts, chord_pts[1:]):
                     elements.append(_line_element(_uid("L", n), a, b, width, dash))
+                    n += 1
+            elif item[0] == "qu":
+                # 'qu' is a Quad (ul/ur/ll/lr corners) — a closed 4-corner
+                # shape, NOT a quadratic Bezier. Emit its edges as lines.
+                quad = item[1]
+                corners = [quad.ul, quad.ur, quad.lr, quad.ll]
+                for i in range(4):
+                    elements.append(_line_element(_uid("L", n), corners[i], corners[(i + 1) % 4],
+                                                  width, dash))
                     n += 1
 
     elements.extend(_text_elements(page, n))

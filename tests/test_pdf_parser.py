@@ -111,3 +111,32 @@ def test_fillet_arc_outline_reconstructs_profile(tmp_path):
     radii = sorted({round(p.r, 1) for p in drawing.profile})
     assert max(radii) == pytest.approx(21.2, abs=0.2)
     assert min(r for r in radii if r > 0) == pytest.approx(10.6, abs=0.2)
+
+
+def test_quad_item_parsed_as_closed_shape(tmp_path):
+    """Regression for the cabaffc CRASH 'IndexError: tuple index out of range'
+    on the zenodo corpus (all 4 candidates): fitz 'qu' items are Quads, not
+    quadratic Beziers; item[2]/item[3] do not exist."""
+    import fitz
+
+    pdf = tmp_path / "quad_shaft.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)
+    # small registration mark drawn as a quad (outside the outline)
+    quad = fitz.Quad(fitz.Point(600, 80), fitz.Point(640, 80),
+                     fitz.Point(640, 110), fitz.Point(600, 110))
+    page.draw_quad(quad, color=(0, 0, 0), width=1.0)
+    page.draw_rect(fitz.Rect(80, 262, 720, 338), color=(0, 0, 0), width=1.4)
+    x, i = 40.0, 0
+    while x < 760.0:
+        length = (60.0, 5.0)[i % 2]
+        page.draw_line(fitz.Point(x, 300), fitz.Point(min(x + length, 760.0), 300),
+                       color=(0, 0, 0), width=0.4)
+        x += length + 8.0
+        i += 1
+    page.insert_text(fitz.Point(600, 150), "Ø120", fontsize=10)
+    doc.save(pdf)
+    doc.close()
+
+    drawing = parse_pdf(pdf)
+    assert drawing.profile, "profile must survive quad items"

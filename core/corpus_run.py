@@ -361,8 +361,21 @@ def _find_corpus_files(corpus: Path) -> dict[str, Path]:
     exts = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
     out = {}
     for p in corpus.rglob("*"):
-        if p.suffix.lower() in exts and p.is_file() and "/golden/" not in p.as_posix():
-            out[p.stem] = p
+        if not (p.suffix.lower() in exts and p.is_file()):
+            continue
+        if "/golden/" in p.as_posix():
+            continue
+        # multi-page PDFs are containers (the zenodo archive PDF screens page 1
+        # only); the split `pages/` are the real corpus units
+        if p.suffix.lower() == ".pdf":
+            try:
+                import fitz
+                with fitz.open(p) as doc:
+                    if doc.page_count > 1:
+                        continue
+            except Exception:
+                pass
+        out[p.stem] = p
     return out
 
 
