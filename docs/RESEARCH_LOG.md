@@ -1,0 +1,175 @@
+# RESEARCH_LOG — real-corpus benchmark program (drawings → STEP)
+
+> **Status: honest, in-progress.** This document replaces an earlier uncommitted
+> draft that was lost in a workspace reset (2026-11-26). Every metric below names
+> its run/commit and carries its denominator. Anything not measured is written
+> "NOT MEASURED" — never implied.
+>
+> **Superseded rows are labelled with the commit that produced them.** Where the
+> latest push (`b8d1f99`) is expected to change a number, the old value is kept
+> and marked `(pre-b8d1f99)` until the new run reports.
+
+## 0. Goal and non-negotiables
+
+Measure the revolution-only pipeline on **real, openly licensed engineering
+drawings** and report numbers with denominators:
+
+1. Every figure is computed from committed/CI-verified data (`data/corpus/*`,
+   CI job annotations). No hand-typed corpus numbers.
+2. jcrzd/ecado (no license metadata) are used for **aggregate, internal
+   evaluation metrics only** — per-file rows are never published, logged, cited
+   or committed. Zenodo 24167336 (CC BY 4.0) rows are citable with attribution.
+3. No fixture special-casing: corpus ids never appear in pipeline/screen logic.
+4. Real evidence only — if the pipeline produced nothing, the log says so.
+5. PRs #7/#8/#9 stay open and unmerged until explicitly reviewed.
+
+## 1. Environment reality (verified)
+
+- Build sandbox egress: only `github.com`, `codeload.github.com`, `api.github.com`,
+  `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org` open.
+  `zenodo.org`, `huggingface.co` — TLS reset (verified). Blob/log hosts
+  (`*.blob.core.windows.net`, results-receiver) — EOF. Artifacts therefore cannot
+  be pulled into the sandbox; **GitHub Actions is the executor**, and
+  `api.github.com` check-run/check-suite annotations are the evidence channel.
+- `.github/workflows/corpus-nightly.yml` runs on schedule, `workflow_dispatch`,
+  and a temporary `push: [feat/corpus-1000]` trigger (auto-runs the corpus on
+  every push; **to be removed after the corpus PR merges**).
+- `actions/cache` carries `data/corpus/` across runs; push runs force a fresh
+  `results.jsonl` (`--no-resume`) so every push re-measures end-to-end.
+- GitHub caps check-run annotation messages at ~4096 bytes; evidence notices are
+  now **chunked** (`-2`, `-3`…) so long logs/evidence blocks survive (`b8d1f99`).
+
+## 2. Data sources (see `docs/DATA_SOURCES.md`)
+
+| source | files (limit 40) | license | use |
+|---|---|---|---|
+| zenodo 24167336 "100 2D orthographic drawings.pdf" (+1 title-like file) | 42 | CC BY 4.0 | per-file evidence OK |
+| hf jcrzd/engineering-drawings (JPGs, UNSW-style sheets) | 40 | **unresolved — internal only** | aggregates only |
+| hf ecado/rfq-engineering-drawings | 0 (not in this run) | unresolved — internal only | not evaluated |
+
+Zenodo files screen: 41 pages (`page_001..page_041`) + 1 title-like PDF
+(`1- 100 2D orthographic drawings.pdf`). jcrzd: JPGs (raster path).
+
+## 3. Phases and findings
+
+### Phase 0 — dataset registry / fetch / manifest join — DONE
+
+`core/dataset_fetch.py` (`hf_list_files` with Link-header pagination after the
+initial flat-API approach broke), `manifest.jsonl` keyed by path; gt_3d matched by
+path **stem** (`dc6d2c1`). Golden fixtures excluded from corpus metrics
+(`5d45541`).
+
+### Phase 1 — screen (`core/corpus_screen.py`) — DONE, iterating on evidence
+
+Commit chain: `dc6d2c1` → `5d45541` → `d591a7d` → `3400e4d` → `fe0973f` →
+`18499c5` → `d37ca8f` → `339b96e` → `b8d1f99`.
+
+Key fixes, each with a root cause:
+
+- **Dash-dot axes exported as separate thin collinear segments** carry no dash
+  attribute; the dashed-line axis detector found 0.000 everywhere. `_chain_axis`
+  detects ≥4 collinear pieces in one y band, gap ≤ 8 mm, coverage ≥ 0.45,
+  absolute span ≥ 120 mm (`339b96e`; was 45 %-of-page which is wrong for A2/A3).
+  Band-quantized axis leaked into the 1 mm mirror tolerance — `_chain_axis` now
+  returns the winning run's exact mean y (`339b96e`).
+- **jcrzd decode**: `HoughLinesP` returns `(N, 1, 4)`; iterating raw rows crashed
+  with `'numpy.int32' object is not iterable` — fixed + per-file isolation so one
+  bad file is UNREADABLE, never a batch failure (`3400e4d`, `18499c5`).
+- **Vector mirror symmetry read 0.000** on auto-traced revolution drawings
+  (outline paths/fillet arcs) — **raster-mirror symmetry** (`_symmetry_raster`,
+  b8d1f99) renders at 150 dpi, compares dark-pixel counts of mirrored row pairs;
+  two regimes (both-halves-inked ratio, one-sided coverage); falls back to the
+  vector score. Goldens still 30/30 BODY_OF_REVOLUTION (raster sym 0.62–0.74).
+- Golden 30/30 forever after `5d45541` exclusion; 39 screen/axis tests pass locally.
+
+### Phase 2 — pipeline on screened candidates — DONE (1 candidate, honest result)
+
+`core/corpus_run.py` runs the full pipeline per candidate with `--no-resume` on
+push runs, `error_signature` clustering, Tier-A gt matching (gt_3d matched by stem).
+
+### Phase 3 — benchmark docs — DONE (auto-generated, regenerated by CI)
+
+`core/corpus_report.py` regenerates `docs/CORPUS_BENCHMARK.md` +
+`docs/BUG_HARVEST.md` each nightly; committed copies are placeholders until a run
+encounters real data. Visual corpus check (`docs/CORPUS_VISUAL_CHECK.md`) — real
+corpus section NOT DONE (blocked on download; see file).
+
+### Phases 5–7 — accuracy verdicts / bug harvest triage / nightly hardening — NOT STARTED
+
+Blocked on ≥1 genuine BODY_OF_REVOLUTION page reaching OK end-to-end. Evaluation
+so far: **0 pages**. Order of work: (1) verify raster-symmetry effect on the
+funnel; (2) root-cause the constant axis ≈ 0.700 and views = 4 telemetry (below);
+(3) page_033 NO_DIMS post-mortem; (4) only then harvest pipeline bugs from real
+rows.
+
+## 4. Measured funnel (commit `339b96e`, check-run `140445276543`, 2026-11-26)
+
+| step | count | denominator / note |
+|---|---|---|
+| manifest records | 82 | zenodo 42 + jcrzd 40 |
+| screened | 81 | 82−81 = 1 row unaccounted for; NOT yet root-caused. Note: the title-like file and `page_001` report byte-identical metrics — suspected same PDF under two names; parity check pending |
+| BODY_OF_REVOLUTION | **1** | zenodo `page_033` |
+| NO_DIMENSIONS | 1 | zenodo `page_002` |
+| NOT_SUPPORTED | 79 | zenodo 39 + jcrzd 40 |
+| processed by pipeline | 1 | page_033 |
+| pipeline OK | 0 | **page_033 → NO_DIMS (wall 2.2 s)**, 3D not produced |
+| Tier A (matched gt_3d STEP) | **0** | no gt match for processed file |
+| Volume/bbox error, accuracy | **NOT MEASURED** | denominator: 0 |
+
+`data/corpus/results.jsonl` (artifact `corpus-results`, 339b96e run): 1 line,
+464 B. Screen wall time 0.03–131 s/file (page_029 slowest).
+
+Zenodo per-file evidence sample (same run; axis/sym/views/Ø/dim-tokens as of
+339b96e — `sym` all pre-`b8d1f99` vector scores): `page_001` axis=0.95 sym=0.28
+views=2 Ø=5; `page_010` axis=0.78 sym=0.84 views=3 Ø=2; `page_011` axis=0.59
+sym=0.33; `page_012` axis=0.76 sym=0.14; `page_021` axis=0.52; remaining pages
+axis=0.700 (span ≈ 175 mm in every case), sym 0.000–0.02, views=4, Ø 0–13,
+dim tokens 27–101.
+
+### Open anomalies (diagnostics added in b8d1f99)
+
+1. **`axis = 0.700` on ~24 zenodo pages** — score saturates at span ≈ 175 mm
+   (`CHAIN_SCORE_FULL_MM=250`). Identical span on dozens of independent pages
+   means either a shared sheet element (frame/title-block edge, projection
+   symbol) or a systematic chain artifact. `axis_y_mm`/`axis_span_mm` per page
+   are now emitted; root cause pending the next CI run.
+2. **`views = 4` on ~most zenodo pages** — the `_views_count` cap (4) likely
+   merges the drawing frame/title-block into two masses on top of the views.
+   `views_detail` now lists the counted clusters for every page.
+3. **page_033** (the single BODY_OF_REVOLUTION candidate at screening) reached
+   the pipeline and returned `NO_DIMS` in 2.2 s — i.e. gates passed screen but
+   the dimension stage found nothing (token format? Ø-glyph variants? gost-dim
+   parse gap?). Post-mortem pending its (now untruncated) evidence row.
+4. **82 vs 81 rows** — one manifest row absent from the screened rows; cause under
+   investigation (title-like file and `page_001` report identical metrics, so a
+   duplicate-name case or a fetch/skip artifact is suspect).
+
+## 5. Legal / attribution
+
+- zenodo 24167336 — CC BY 4.0, attribution in README + DATA_SOURCES. Per-file
+  rows may be published.
+- jcrzd — no license metadata: aggregates only, never per-file publication,
+  never committed (corpus downloads are `.gitignore`d).
+- ecado — not evaluated in this run.
+- MechAtlas — gated; never used.
+
+## 6. Commit / CI index
+
+`dc6d2c1` stem-join gt_3d · `5d45541` golden exclusion · `d591a7d` chain detector
+v1 + jcrzd fetch fixes · `3400e4d` per-file isolation · `fe0973f` PDF/JCRZD
+diagnostics annotations · `18499c5` run-based chain + HoughLinesP fix ·
+`d37ca8f` focused forensics (pages 003/011/014/022; band census 0.75/2.0/4.0 mm) ·
+`339b96e` absolute-span chain (≥120 mm), 3 mm bands, exact-mean-y axis;
+ci: tests 45981222258 ✓, corpus 45981210124 ✓, build-exe 45981222246 ✓ ·
+`b8d1f99` raster-mirror symmetry + chunked annotations + diagnostics.
+
+## 7. Rules learned (carry forward)
+
+- Band-quantize nothing that feeds a tolerance-based comparison.
+- Absolute spans, not page-relative fractions, for axis-length evidence.
+- Evidence lines must survive CI annotation limits — chunk at ~3.4 KB.
+- A screen pass means nothing until the pipeline confirms parseable dimensions;
+  report the stage that dropped the file.
+- Never widen gates to make a number look better; diagnose, then fix generally.
+- `git clean` in the repo root wipes untracked work — snapshot first, always
+  (lost this log once already).

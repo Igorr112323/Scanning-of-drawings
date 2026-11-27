@@ -54,3 +54,4 @@ data/corpus/*
 !data/corpus/results.jsonl
 !data/corpus/screening.csv
 !data/corpus/golden/
+.venv-corpus/
