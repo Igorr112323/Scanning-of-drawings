@@ -131,6 +131,24 @@ pipeline re-measured. New funnel: **81 screened → 2 BODY_OF_REVOLUTION**
   were emitted by a trace of a raster, not by CAD export. Clean pages
   (page_001: 403×1.44 pt, 246×0.72 pt, 741 curves) exist but the trace noise
   dominates the corpus.
+- **`views = 4` root-caused** (CORPUS-ZENODO-DIAG, run 2026-11-27): every page
+  carries exactly one dominant cluster = the GOST **sheet frame**
+  (A3: `400x287@(15,5)`; A2: `574x410@(2,9)`); the views gate counted it as a
+  view. Fixed: frame-sized clusters (≥80 % of both page dims) are excluded
+  from view counting and from `views_detail`.
+- **`axis = 0.700` root-caused** (same annotation): the "axis" is a constant
+  **stamp-rule / title-block chain at ~95 % of the page height** (A3:
+  y ≈ 282.4 mm; A2: y ≈ 405.7 mm) with an identical span of 175.0 mm on every
+  sheet — a sheet element, not a revolution axis. A valid revolution axis
+  spans the *view* (page_001: y=217.7, span=236.8; page_033: y=135.2,
+  span=233.3). Fixed: chains below the GOST title-block zone (y > 0.85 of the
+  page height) are rejected as axis evidence (both screen and pipeline
+  fallback paths).
+- **Curve-arc coverage bug root-caused and fixed**: GOST fillets arrive as
+  Bezier curves; v1 ignored curves, so the outline had uncovered gaps and
+  `build_half_profile` returned `[]` → pipeline NO_DIMS despite 47 parsed
+  dims. Curves are now de Casteljau-flattened to ≤0.1 mm chords
+  (`test_fillet_arc_outline_reconstructs_profile`).
 - **Multi-page PDFs are now excluded from screening** (the zenodo archive PDF
   screens page 1 only, duplicating page_001); regression tests added.
 

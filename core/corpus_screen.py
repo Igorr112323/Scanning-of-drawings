@@ -95,12 +95,21 @@ def _dia_token_count(tokens: list[str]) -> int:
     return sum(1 for t in tokens if _DIA_RE.search(t))
 
 
-def _views_count(boxes: list[tuple[float, float, float, float]]) -> int:
-    """Rough view-cluster count: union-find over stroke bboxes."""
+def _views_count(boxes: list[tuple[float, float, float, float]],
+                 page_w_mm: float = 0.0, page_h_mm: float = 0.0) -> int:
+    """Rough view-cluster count: union-find over stroke bboxes.
+
+    Sheet furniture is never a view: the GOST frame spans (nearly) the whole
+    sheet, so any cluster covering ≥80 % of both page dimensions is the frame
+    (and the title block merged into it) and is excluded."""
     if not boxes:
         return 0
     clusters = _cluster_boxes(boxes)
-    return min(len(_big_clusters(boxes, clusters)), 4)
+    big = _big_clusters(boxes, clusters)
+    if page_w_mm > 0.0 and page_h_mm > 0.0:
+        big = [b for b in big
+               if not ((b[2] - b[0]) >= 0.8 * page_w_mm and (b[3] - b[1]) >= 0.8 * page_h_mm)]
+    return min(len(big), 4)
 
 
 def _big_clusters(boxes: list[tuple[float, float, float, float]],
@@ -246,6 +255,7 @@ def classify_pdf(path: str | Path) -> Evidence:
             drawings = list(page.get_drawings())
             page_rect = page.rect
             page_w = page.rect.width * MM_PER_PT
+            page_h = page.rect.height * MM_PER_PT
     except Exception as exc:
         return Evidence(path, "UNREADABLE", reason=f"fitz failed: {exc.__class__.__name__}: {exc}")
 
@@ -302,6 +312,10 @@ def classify_pdf(path: str | Path) -> Evidence:
         ev.axis_score = 0.3  # long solid horizontal: weak evidence only
     if axis_y is None:
         chain = _chain_axis(horiz_all)
+        # sheet furniture (constant 175 mm stamp rule at ~95 % of the page
+        # height, seen on ~2/3 of the zenodo sheets) is not a revolution axis
+        if chain is not None and chain[0] > 0.85 * page_h:
+            chain = None
         if chain is not None:
             axis_y, axis_span = chain
             ev.axis_score = round(min(1.0, axis_span / CHAIN_SCORE_FULL_MM), 3)
@@ -318,9 +332,11 @@ def classify_pdf(path: str | Path) -> Evidence:
             ev.symmetry_score = round(_symmetry(sym_segments, axis_y, axis_span), 3)
             ev.sym_source = "vector"
 
-    ev.views_count = _views_count(all_boxes)
+    ev.views_count = _views_count(all_boxes, page_w, page_h)
     if all_boxes:
         big = _big_clusters(all_boxes)
+        big = [b for b in big
+               if not ((b[2] - b[0]) >= 0.8 * page_w and (b[3] - b[1]) >= 0.8 * page_h)]
         ev.views_detail = ";".join(
             f"{(b[2] - b[0]):.0f}x{(b[3] - b[1]):.0f}@({b[0]:.0f},{b[1]:.0f})" for b in big[:6])
 

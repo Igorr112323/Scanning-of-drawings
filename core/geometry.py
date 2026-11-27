@@ -83,7 +83,8 @@ def find_axis_chain(elements: list["VectorElement"]):
     return detect_axis_chain(horiz)
 
 
-def find_axis(elements: list[VectorElement]) -> tuple[str | None, float | None]:
+def find_axis(elements: list[VectorElement],
+              page_height_mm: float | None = None) -> tuple[str | None, float | None]:
     """Locate the revolution axis: the longest dash-dot line on the sheet.
 
     Returns ("horizontal", y_mm) or ("vertical", x_mm); (None, None) if absent.
@@ -109,6 +110,10 @@ def find_axis(elements: list[VectorElement]) -> tuple[str | None, float | None]:
     if best[0] is not None:
         return best
     chain = find_axis_chain(elements)
+    # a constant stamp-rule chain at the very bottom of the sheet is furniture,
+    # not a revolution axis (seen on the zenodo sheets); drop it
+    if chain is not None and page_height_mm is not None and chain[0] > 0.85 * page_height_mm:
+        chain = None
     if chain is not None:
         return ("horizontal", chain[0])
     return best
@@ -506,6 +511,7 @@ def _dedupe(points: list[ProfilePoint]) -> list[ProfilePoint]:
 
 def extract_revolution(
     elements: list[VectorElement],
+    page_height_mm: float | None = None,
 ) -> tuple[list[ProfilePoint], float | None, str | None, float | None]:
     """Locate the axis and return (profile, bore_diameter, orientation, axis_coord).
 
@@ -513,7 +519,7 @@ def extract_revolution(
     of the axis in mm (Y for horizontal, X for vertical). All ``None``/[] when
     there is no usable axis or the outline is not a simple body of revolution.
     """
-    orientation, coord = find_axis(elements)
+    orientation, coord = find_axis(elements, page_height_mm=page_height_mm)
     if coord is None:
         return [], None, None, None
     if orientation == "vertical":

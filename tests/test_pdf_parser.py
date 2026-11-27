@@ -71,3 +71,43 @@ def test_parse_rejects_non_pdf(tmp_path):
     path.write_text("not a pdf")
     with pytest.raises(ValueError):
         parse_pdf(path)
+
+
+def test_fillet_arc_outline_reconstructs_profile(tmp_path):
+    """Regression for the zenodo page_001 failure (run 2026-11-27): GOST
+    fillets arrive as cubic Bezier curves; v1 ignored curves, leaving
+    coverage gaps in the half-profile -> 'no revolution profile
+    reconstructed' -> pipeline NO_DIMS with 47 dims parsed. The curves must
+    be flattened to chords and the profile rebuilt."""
+    import fitz
+
+    pdf = tmp_path / "fillet_shaft.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)
+    W = 1.4
+    page.draw_line(fitz.Point(80, 240), fitz.Point(380, 240), color=(0, 0, 0), width=W)
+    page.draw_bezier(fitz.Point(380, 240), fitz.Point(405, 240),
+                     fitz.Point(415, 270), fitz.Point(440, 270), color=(0, 0, 0), width=W)
+    page.draw_line(fitz.Point(440, 270), fitz.Point(720, 270), color=(0, 0, 0), width=W)
+    page.draw_line(fitz.Point(80, 360), fitz.Point(380, 360), color=(0, 0, 0), width=W)
+    page.draw_bezier(fitz.Point(380, 360), fitz.Point(405, 360),
+                     fitz.Point(415, 330), fitz.Point(440, 330), color=(0, 0, 0), width=W)
+    page.draw_line(fitz.Point(440, 330), fitz.Point(720, 330), color=(0, 0, 0), width=W)
+    page.draw_line(fitz.Point(80, 240), fitz.Point(80, 360), color=(0, 0, 0), width=W)
+    page.draw_line(fitz.Point(720, 270), fitz.Point(720, 330), color=(0, 0, 0), width=W)
+    x, i = 40.0, 0  # traced dash-dot: separate thin segments, no dash attribute
+    while x < 780.0:
+        length = (60.0, 5.0)[i % 2]
+        page.draw_line(fitz.Point(x, 300), fitz.Point(min(x + length, 780.0), 300),
+                       color=(0, 0, 0), width=0.4)
+        x += length + 8.0
+        i += 1
+    page.insert_text(fitz.Point(620, 120), "Ø120", fontsize=10)
+    doc.save(pdf)
+    doc.close()
+
+    drawing = parse_pdf(pdf)
+    assert drawing.profile, "fillet arc must not void the half-profile"
+    radii = sorted({round(p.r, 1) for p in drawing.profile})
+    assert max(radii) == pytest.approx(21.2, abs=0.2)
+    assert min(r for r in radii if r > 0) == pytest.approx(10.6, abs=0.2)

@@ -71,6 +71,72 @@ def _classify_stroke(width_pt: float, dash: str | None, bbox) -> ElementType:
     return ElementType.DIMENSION_LINE
 
 
+def _pt_dist(a, b) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1]) if isinstance(a, tuple) else math.hypot(a.x - b.x, a.y - b.y)
+
+
+def _dist_point_chord(p, a, b) -> float:
+    """Distance of point p from the chord a–b (all in sheet coordinates)."""
+    ax, ay = (a[0], a[1]) if isinstance(a, tuple) else (a.x, a.y)
+    bx, by = (b[0], b[1]) if isinstance(b, tuple) else (b.x, b.y)
+    px, py = (p[0], p[1]) if isinstance(p, tuple) else (p.x, p.y)
+    dx, dy = bx - ax, by - ay
+    if dx == 0.0 and dy == 0.0:
+        return math.hypot(px - ax, py - ay)
+    return abs(dy * px - dx * py + bx * ay - by * ax) / math.hypot(dx, dy)
+
+
+def _cubic_chords(p0, c1, c2, p3, tol_pt: float = 0.3, max_depth: int = 12) -> list:
+    """Adaptive de Casteljau flattening of a cubic Bezier.
+
+    Auto-traced GOST outlines carry fillet/chamfer arcs as curves; ignoring
+    them leaves coverage gaps in the half-profile. Flatten to chords whose
+    sagitta stays below ``tol_pt`` (≈0.1 mm)."""
+    out: list = []
+
+    def rec(a, b, c, d, depth: int) -> None:
+        if depth >= max_depth or (
+            _dist_point_chord(b, a, d) <= tol_pt and _dist_point_chord(c, a, d) <= tol_pt
+        ):
+            out.append(d)
+            return
+        m01 = _mid(a, b); m12 = _mid(b, c); m23 = _mid(c, d)
+        m012 = _mid(m01, m12); m123 = _mid(m12, m23)
+        m0123 = _mid(m012, m123)
+        rec(a, m01, m012, m0123, depth + 1)
+        rec(m0123, m123, m23, d, depth + 1)
+
+    def _mid(a, b):
+        if isinstance(a, tuple):
+            return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        return fitz.Point((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+
+    rec(p0, c1, c2, p3, 0)
+    return out
+
+
+def _quad_chords(p0, cc, p2, tol_pt: float = 0.3, max_depth: int = 12) -> list:
+    """Adaptive flattening of a quadratic Bezier (fitz 'qu' items)."""
+    out: list = []
+
+    def rec(a, c, b, depth: int) -> None:
+        if depth >= max_depth or _dist_point_chord(c, a, b) <= tol_pt:
+            out.append(b)
+            return
+        m01 = _mid(a, c); m12 = _mid(c, b)
+        m012 = _mid(m01, m12)
+        rec(a, m01, m012, depth + 1)
+        rec(m012, m12, b, depth + 1)
+
+    def _mid(a, c):
+        if isinstance(a, tuple):
+            return ((a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0)
+        return fitz.Point((a.x + c.x) / 2.0, (a.y + c.y) / 2.0)
+
+    rec(p0, cc, p2, 0)
+    return out
+
+
 def _text_elements(page: fitz.Page, start_index: int) -> list[VectorElement]:
     elements: list[VectorElement] = []
     words = page.get_text("words")  # (x0, y0, x1, y1, word, block, line, word_no)
@@ -127,13 +193,23 @@ def parse_pdf(path: str | Path) -> Drawing:
                 for a, b in zip(pts, pts[1:]):
                     elements.append(_line_element(_uid("L", n), a, b, width, dash))
                     n += 1
-            # curves (c/qu) are ignored in v1 — see docs/ROADMAP.md (fillets as arcs)
+            elif item[0] in ("c", "qu"):
+                # flatten Bezier/arcs to chords — GOST traced outlines draw
+                # fillets as curves; ignoring them broke outline coverage
+                if item[0] == "c":
+                    chord_pts = [item[1]] + _cubic_chords(item[1], item[2], item[3], item[4])
+                else:
+                    chord_pts = [item[1]] + _quad_chords(item[1], item[2], item[3])
+                for a, b in zip(chord_pts, chord_pts[1:]):
+                    elements.append(_line_element(_uid("L", n), a, b, width, dash))
+                    n += 1
 
     elements.extend(_text_elements(page, n))
 
     page_width_mm = page_rect.width * MM_PER_PT
     page_height_mm = page_rect.height * MM_PER_PT
-    profile, bore_diameter, axis_orientation, axis_coord = extract_revolution(elements)
+    profile, bore_diameter, axis_orientation, axis_coord = extract_revolution(
+        elements, page_height_mm=page_height_mm)
     axis_y: float | None = axis_coord if axis_orientation == "horizontal" else None
 
     from core.models import View

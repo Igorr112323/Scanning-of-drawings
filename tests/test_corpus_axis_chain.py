@@ -128,3 +128,54 @@ def test_pipeline_axis_chain_fallback_reconstructs_profile(tmp_path):
     drawing = parse_pdf(pdf)
     assert drawing.profile, "profile must reconstruct from the traced centre line"
     assert drawing.views and drawing.views[0].axis_y is not None
+
+
+def test_bottom_strip_chain_is_furniture_not_axis(tmp_path):
+    """Regression for the constant axis=0.700 (span 175.0, y≈282.4 mm) seen on
+    ~2/3 of the zenodo sheets: the stamp rule at the bottom of the sheet is a
+    constant sheet element, not a revolution axis — it must not qualify."""
+    import fitz
+
+    pdf = tmp_path / "stamp_chain.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)  # A4 landscape, 297 mm tall
+    # full-width dash chain in the bottom 15 % of the page (y ≈ 282 mm)
+    x, i = 40.0, 0
+    while x < 760.0:
+        length = (60.0, 5.0)[i % 2]
+        page.draw_line(fitz.Point(x, 575), fitz.Point(min(x + length, 760.0), 575),
+                       color=(0, 0, 0), width=0.4)
+        x += length + 8.0
+        i += 1
+    page.insert_text(fitz.Point(600, 120), "Ø120", fontsize=10)
+    doc.save(pdf)
+    doc.close()
+    from core.corpus_screen import classify_file
+    ev = classify_file(pdf)
+    assert ev.axis_score == 0.0, ev.reason
+
+
+def test_sheet_frame_cluster_is_not_a_view(tmp_path):
+    """The GOST frame spans the sheet and unions with content; it must not
+    count as a view mass."""
+    import fitz
+
+    pdf = tmp_path / "framed_shaft.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)
+    # GOST frame ~ full page
+    page.draw_rect(fitz.Rect(20, 20, 822, 575), color=(0, 0, 0), width=1.4)
+    page.draw_rect(fitz.Rect(80, 262, 720, 338), color=(0, 0, 0), width=1.4)
+    x, i = 40.0, 0
+    while x < 760.0:
+        length = (60.0, 5.0)[i % 2]
+        page.draw_line(fitz.Point(x, 300), fitz.Point(min(x + length, 760.0), 300),
+                       color=(0, 0, 0), width=0.4)
+        x += length + 8.0
+        i += 1
+    page.insert_text(fitz.Point(600, 120), "Ø120", fontsize=10)
+    doc.save(pdf)
+    doc.close()
+    from core.corpus_screen import classify_file
+    ev = classify_file(pdf)
+    assert ev.views_count <= 2, ev.reason
