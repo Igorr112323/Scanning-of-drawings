@@ -163,6 +163,42 @@ jobs:
           if jp.exists():
               notice("JCRZD-LOG", jp.read_text(encoding="utf-8", errors="replace")[-3000:])
 
+          # per-page pymupdf drawing-type census — WHY is there no horizontal
+          # geometry? items histogram, horizontal line/curve counts, stroke widths
+          dlines = []
+          try:
+              import fitz, collections
+              for pdf in sorted((root / "zenodo_open_mech" / "pages").glob("page_*.pdf")):
+                  with fitz.open(pdf) as doc:
+                      page = doc[0]
+                      counts = collections.Counter()
+                      horiz_l = 0
+                      horiz_c = 0
+                      widths = collections.Counter()
+                      for dr in page.get_drawings():
+                          widths[round(dr.get("width") or 0.0, 2)] += 1
+                          for it in dr.get("items", []):
+                              counts[it[0]] += 1
+                              if it[0] == "l":
+                                  p1, p2 = it[1], it[2]
+                                  if abs(p2.y - p1.y) * 0.3528 <= 0.5:
+                                      horiz_l += 1
+                              elif it[0] == "c":
+                                  ys = [it[1].y, it[2].y, it[3].y, it[4].y]
+                                  if max(ys) - min(ys) <= 1.4:
+                                      horiz_c += 1
+                      dlines.append(f"{pdf.stem}: items={dict(counts)} horiz_l={horiz_l} horiz_c={horiz_c} widths={dict(widths.most_common(5))}")
+          except Exception as exc:
+              dlines.append(f"diagnostics failed: {exc!r}")
+          if dlines:
+              notice("CORPUS-PDF-DIAGNOSTICS", dlines)
+
+          # jcrzd rows: verdict + reason (diagnostics only — aggregates/labels,
+          # no per-file evidence publication for the unlicensed source)
+          jlines = [f"{r['id']}: {r['verdict']} — {r['reason']}" for r in screening if src_of(r['id']) == "hf_jcrzd"]
+          if jlines:
+              notice("CORPUS-JCRZD-DIAG", jlines[:10])
+
           # per-file screening evidence for zenodo rows (CC BY 4.0 — citable)
           e_lines = []
           for r in sorted(screening, key=lambda r: r['id']):
