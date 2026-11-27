@@ -68,8 +68,11 @@ nightly CI на GitHub-hosted раннере (см. `.github/workflows/corpus-ni
 
 - **Name:** jcrzd/engineering-drawings
 - **URL:** https://huggingface.co/datasets/jcrzd/engineering-drawings
-- **License:** unspecified by the author — treat as research-use-only; never redistribute the binaries. Attribution required if referenced in papers: `jcrzd/engineering-drawings (huggingface.co/datasets/jcrzd/engineering-drawings)`.
-- **Access status:** OPEN (anon read, HF resolve + tree API). From agent build sandbox: **blocked by network**.
+- **License:** **unresolved — no license metadata on the dataset card (verified). Internal evaluation only.**
+  Not redistributable, not citable as a dataset, no release artifacts may contain its files.
+  Only aggregate, derived metrics may be reported, and they must be labelled as coming from an
+  unlicensed internal evaluation corpus.
+- **Access status:** OPEN (anon read, HF resolve + tree API). From agent build sandbox: **blocked by network**; from GitHub-hosted CI: reachable (HTTP 200, curator-verified 2026-11-26).
 - **Files:** ~1000 JPG sheets, ~3509×2481 px, UNSW-style academic sheets with title block.
   List files:
   ```
@@ -80,14 +83,17 @@ nightly CI на GitHub-hosted раннере (см. `.github/workflows/corpus-ni
 - **Usable for:** degraded-raster stress corpus (contour/axis/text separation, robustness, pipeline coverage).
 - **NOT usable for:** dimension-accuracy metrics — the majority of sheets are **drawing-reading exercises and carry NO dimension values**. Never report OCR/accuracy numbers on this set.
 - **Date of verification:** 2026-11-26 (curator pre-check; blocked in build sandbox).
-- **Notes:** metric value is a *coverage/limit* statement ("N of 1000 real sheets survive the pipeline"), not an accuracy claim.
+- **Notes:** metric value is a *coverage/limit* statement ("N of 1000 real sheets survive the pipeline"), not an accuracy claim. Any number reported from this corpus must carry the label "unlicensed internal evaluation corpus (jcrzd/engineering-drawings), aggregate metrics only".
 
 ## C) Hugging Face — `ecado/rfq-engineering-drawings`
 
 - **Name:** ecado/rfq-engineering-drawings
 - **URL:** https://huggingface.co/datasets/ecado/rfq-engineering-drawings
-- **License:** unspecified by the author — research-use-only; do not redistribute binaries.
-- **Access status:** OPEN. From agent build sandbox: **blocked by network**.
+- **License:** **unresolved — no license metadata on the dataset card (team-verified 2026-11-26). Internal evaluation only.**
+  Not redistributable, not citable, no release artifacts may contain its files.
+  Only aggregate, derived metrics may be reported, labelled as coming from an unlicensed
+  internal evaluation corpus.
+- **Access status:** OPEN. From agent build sandbox: **blocked by network**; from GitHub-hosted CI: reachable (HTTP 200, curator-verified 2026-11-26).
 - **Files:** 600 samples, parquet, `data/train-*`, `validation-*`, `test-*`; question/answer fields.
   ```
   curl -L -o rfq.parquet "https://huggingface.co/datasets/ecado/rfq-engineering-drawings/resolve/main/data/train-00000-of-00002.parquet"
@@ -105,7 +111,7 @@ nightly CI на GitHub-hosted раннере (см. `.github/workflows/corpus-ni
 - **URL:** https://huggingface.co/datasets/XUXU666/MechAtlas
 - **License:** CC BY 4.0
 - **Attribution:** XUXU666/MechAtlas (huggingface.co/datasets/XUXU666/MechAtlas), CC BY 4.0
-- **Access status:** **GATED — file downloads return HTTP 401** without approved access. Curator verified gating.
+- **Access status:** **GATED — file downloads return HTTP 401** without approved access. Curator verified gating (2026-11-26). Citable under CC BY 4.0 once access is granted.
 - **Files:** ~49 662 PDF+STEP pairs.
 - **Usable for:** the primary long-term Tier A target at 10–100× Zenodo scale — only after access is granted.
 - **NOT usable for:** anything right now.
@@ -116,14 +122,31 @@ nightly CI на GitHub-hosted раннере (см. `.github/workflows/corpus-ni
 
 ## Legal / licensing summary
 
-| Source | License | Redistribution of binaries | In git? |
-|---|---|---|---|
-| Zenodo 24167336 | CC BY 4.0 | allowed with attribution (we still do NOT commit binaries) | never |
-| jcrzd | unspecified | not granted — do not redistribute | never |
-| ecado | unspecified | not granted — do not redistribute | never |
-| MechAtlas | CC BY 4.0 | gated; after approval with attribution | never |
+| Source | License | Citable? | Redistribution of binaries | In git? | May ship in release artifacts? |
+|---|---|---|---|---|---|
+| Zenodo 24167336 | **CC BY 4.0** | **yes** (with attribution, see below) | allowed with attribution (we still do NOT commit binaries) | never | no raw files; derived STEP outputs of *our own* pipeline on their drawings are fine to distribute with attribution |
+| MechAtlas | **CC BY 4.0 (gated, HTTP 401)** | yes — after manual approval | after approval with attribution | never | same as Zenodo |
+| jcrzd | **unresolved — no license metadata** | **NO — internal evaluation only** | not granted | never | **NO** |
+| ecado | **unresolved — no license metadata** | **NO — internal evaluation only** | not granted | never | **NO** |
 
-Only manifests (`manifest.jsonl`, ids+checksums, no binaries), small synthetic fixtures,
-≤1 MB samples (30 golden files) and reports are committed to git. `data/corpus/` is
-git-ignored except for `manifest.jsonl`, `results.jsonl`, `README_RU.md`, `golden/`
-(see `data/corpus/README_RU.md` and `.gitignore`).
+Required attribution (Zenodo, CC BY 4.0):
+
+> Open Mechanical 3D Models Dataset (zenodo.org/records/24167336), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+
+Required attribution (MechAtlas, once approved, CC BY 4.0):
+
+> XUXU666/MechAtlas (huggingface.co/datasets/XUXU666/MechAtlas), licensed under CC BY 4.0.
+
+Rules for the unlicensed corpora (jcrzd, ecado):
+
+1. Their files are never committed, never attached to releases, never shown in screenshots or docs.
+2. Metrics derived from them are reported only in aggregate (e.g., "73 of 1000 sheets screened to BODY_OF_REVOLUTION")
+   and always labelled: **"unlicensed internal evaluation corpus (jcrzd/engineering-drawings)"**.
+3. They are never cited as a redistributable dataset, in documentation or in any publication.
+4. Attribution strings for them may identify the source but grant nothing: `jcrzd/engineering-drawings (huggingface.co/datasets/jcrzd/engineering-drawings), license unresolved — internal evaluation only`.
+
+Only manifests (`manifest.jsonl` — ids+checksums, no binaries), aggregate reports
+(`results.jsonl`, `screening.csv`, `docs/*.md`, `reports/*.png`), the committed golden
+fixtures (`data/corpus/golden/`, 30 small synthetic PDFs) and — once real drawings may be
+legally redistributed — a small sample of real files are committed to git.
+Raw corpora are git-ignored (see `.gitignore`); no downloaded binary belongs in this repository.

@@ -41,6 +41,11 @@ python -m core.corpus_run --corpus data/corpus --out data/corpus/results.jsonl
 python -m core.corpus_report --golden-check
 ```
 
+**Атрибуция (CC BY 4.0):** Open Mechanical 3D Models Dataset (zenodo.org/records/24167336),
+licensed under CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+(MechAtlas — CC BY 4.0 после одобрения доступа; jcrzd/ecado — unresolved, только
+внутренняя сводная статистика, ни в релизах, ни в git, ни в цитировании.)
+
 ## Политика данных
 
 - **Сырые файлы корпуса в git НЕ коммитятся.** `data/corpus/` в `.gitignore`;

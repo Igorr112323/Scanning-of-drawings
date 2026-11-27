@@ -171,6 +171,13 @@ CI: `.github/workflows/ci.yml` — pytest на каждый push/PR + headless-�
 Детали: [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md), [README_RU.md](README_RU.md),
 [docs/CORPUS_BENCHMARK.md](docs/CORPUS_BENCHMARK.md), [docs/BUG_HARVEST.md](docs/BUG_HARVEST.md).
 
+**Атрибуция (CC BY 4.0):** Open Mechanical 3D Models Dataset (zenodo.org/records/24167336),
+licensed under CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+
+Unlicensed HF corpora (jcrzd, ecado) are used for aggregate internal evaluation metrics only —
+never committed, never in releases, never cited as a redistributable dataset
+(see `docs/DATA_SOURCES.md` → Legal table).
+
 **Статус честный:** корпус ещё не загружен (хосты недоступны из build-песочницы;
 первый прогон — ночной CI). Метрики корпуса: **NOT MEASURED** — будут взяты из
 закоммиченного `data/corpus/results.jsonl`, без выдуманных чисел.

@@ -51,9 +51,9 @@ sources:
     kind: hf_tree
     hf_api_tree: "https://huggingface.co/api/datasets/jcrzd/engineering-drawings/tree/main"
     hf_resolve_base: "https://huggingface.co/datasets/jcrzd/engineering-drawings/resolve/main"
-    license: "unknown (HF dataset, unspecified by author — treat as research-only, do not redistribute binaries)"
+    license: "unresolved — no license metadata on the dataset card (verified 2026-11-26); INTERNAL EVALUATION ONLY: not redistributable, not citable, no release artifacts"
     license_url: ""
-    attribution: "jcrzd/engineering-drawings (huggingface.co/datasets/jcrzd/engineering-drawings)"
+    attribution: "jcrzd/engineering-drawings (huggingface.co/datasets/jcrzd/engineering-drawings), license unresolved — internal evaluation only"
     access_status: verified_open_curator_agent_sandbox_blocked
     access_method: "HTTP GET (HF resolve endpoints)"
     files:
@@ -69,15 +69,16 @@ sources:
       - "Tier A ground truth (no 3D models attached)"
     notes:
       - "Retained as stress corpus only. Never report dimension accuracy on this set."
+      - "UNLICENSED INTERNAL EVALUATION CORPUS — aggregate, derived metrics only, always labelled as such; never committed, never in release artifacts, never cited as a redistributable dataset."
 
   hf_ecado:
     display_name: "ecado/rfq-engineering-drawings (Hugging Face)"
     kind: hf_parquet
     hf_api_tree: "https://huggingface.co/api/datasets/ecado/rfq-engineering-drawings/tree/main"
     hf_resolve_base: "https://huggingface.co/datasets/ecado/rfq-engineering-drawings/resolve/main"
-    license: "unknown (HF dataset, unspecified by author — treat as research-only, do not redistribute binaries)"
+    license: "unresolved — no license metadata on the dataset card (verified 2026-11-26); INTERNAL EVALUATION ONLY: not redistributable, not citable, no release artifacts"
     license_url: ""
-    attribution: "ecado/rfq-engineering-drawings (huggingface.co/datasets/ecado/rfq-engineering-drawings)"
+    attribution: "ecado/rfq-engineering-drawings (huggingface.co/datasets/ecado/rfq-engineering-drawings), license unresolved — internal evaluation only"
     access_status: verified_open_curator_agent_sandbox_blocked
     access_method: "HTTP GET (HF parquet files)"
     files:
@@ -96,6 +97,7 @@ sources:
     notes:
       - "Schema NOT inspected yet (agent sandbox cannot reach huggingface.co). Run: python -m core.dataset_fetch --source hf_ecado --inspect"
       - "If the answer fields do not carry dimension values, this source is documented as unusable for OCR accuracy and skipped."
+      - "UNLICENSED INTERNAL EVALUATION CORPUS — aggregate, derived metrics only, always labelled as such; never committed, never in release artifacts, never cited as a redistributable dataset."
 
   mechatlas:
     display_name: "XUXU666/MechAtlas (Hugging Face)"
