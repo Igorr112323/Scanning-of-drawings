@@ -63,6 +63,11 @@ class Evidence:
     views_count: int = 0
     text_layer: bool = False
     reason: str = ""
+    # diagnostics (additive; corpus rows may carry them, never required)
+    axis_y_mm: float = -1.0     # where the winning chain sits (page coords, mm)
+    axis_span_mm: float = 0.0   # winning chain span before normalization
+    sym_source: str = "none"    # "raster" | "vector" | "none"
+    views_detail: str = ""      # "WxH@(x,y);…" for clusters that counted as views
 
     def csv_row(self) -> dict:
         return {
@@ -76,6 +81,10 @@ class Evidence:
             "views_count": self.views_count,
             "text_layer": int(self.text_layer),
             "reason": self.reason,
+            "axis_y_mm": f"{self.axis_y_mm:.1f}",
+            "axis_span_mm": f"{self.axis_span_mm:.1f}",
+            "sym_source": self.sym_source,
+            "views_detail": self.views_detail,
         }
 
 
@@ -94,6 +103,30 @@ def _views_count(boxes: list[tuple[float, float, float, float]]) -> int:
     """Rough view-cluster count: union-find over stroke bboxes."""
     if not boxes:
         return 0
+    clusters = _cluster_boxes(boxes)
+    return min(len(_big_clusters(boxes, clusters)), 4)
+
+
+def _big_clusters(boxes: list[tuple[float, float, float, float]],
+                  clusters: dict[int, list[int]] | None = None,
+                  min_w_mm: float = 25.0, min_h_mm: float = 12.0) -> list[tuple[float, float, float, float]]:
+    """Clusters whose union bbox is at least min_w_mm x min_h_mm."""
+    if clusters is None:
+        clusters = _cluster_boxes(boxes)
+    big = []
+    for members in clusters.values():
+        x0 = min(boxes[m][0] for m in members)
+        x1 = max(boxes[m][2] for m in members)
+        y0 = min(boxes[m][1] for m in members)
+        y1 = max(boxes[m][3] for m in members)
+        if (x1 - x0) >= min_w_mm and (y1 - y0) >= min_h_mm:
+            big.append((x0, y0, x1, y1))
+    big.sort(key=lambda b: -(b[2] - b[0]))
+    return big
+
+
+def _cluster_boxes(boxes: list[tuple[float, float, float, float]]) -> dict[int, list[int]]:
+    """Union-find clusters over stroke bboxes (module-level for reuse)."""
     inflate = 6.0  # mm — pieces of one view merge
     parent = list(range(len(boxes)))
 
@@ -103,8 +136,6 @@ def _views_count(boxes: list[tuple[float, float, float, float]]) -> int:
             i = parent[i]
         return i
 
-    # sweep over x — with thousands of stroke boxes (acad pages split dash-dot
-    # axes into many segments) the naive O(N^2) blows up to minutes per page
     order = sorted(range(len(boxes)), key=lambda i: boxes[i][0])
     sboxes = [boxes[i] for i in order]
     remap = order
@@ -121,15 +152,7 @@ def _views_count(boxes: list[tuple[float, float, float, float]]) -> int:
     clusters: dict[int, list[int]] = {}
     for i in range(len(boxes)):
         clusters.setdefault(find(i), []).append(i)
-    big = 0
-    for members in clusters.values():
-        x0 = min(boxes[m][0] for m in members)
-        x1 = max(boxes[m][2] for m in members)
-        y0 = min(boxes[m][1] for m in members)
-        y1 = max(boxes[m][3] for m in members)
-        if (x1 - x0) >= 25.0 and (y1 - y0) >= 12.0:
-            big += 1
-    return min(big, 4)
+    return clusters
 
 
 def _symmetry(segments: list[tuple[float, float, float, float]], axis_y: float,
@@ -153,6 +176,61 @@ def _symmetry(segments: list[tuple[float, float, float, float]], axis_y: float,
     span = sum(max(0.0, abs(s[2] - s[0])) for s in segments if (s[1] < axis_y - 0.5) == bool(above))
     return min(1.0, span / axis_span)
 
+
+
+def _symmetry_raster(pdf_path: str, page_rect, axis_y_mm: float,
+                     axis_span_mm: float) -> float | None:
+    """Mirror symmetry from the *rendered page*, not the stroke list.
+
+    Auto-traced vector PDFs mirror poorly as raw line segments (outline
+    paths, fillet arcs, dash-dot cadence) so the stroke-based ``_symmetry``
+    reports 0.000 even on textbook revolution layouts. Rasterizing at
+    150 dpi and comparing dark-pixel counts of mirrored row pairs is robust
+    to curves and trace artefacts.
+
+    Two regimes, mirroring ``_symmetry``:
+      * both halves inked  → ``2 * sum(min(a, b)) / sum(a + b)`` over
+        mirrored row pairs;
+      * one half blank     → one-sided ink coverage of the axis span.
+
+    Returns ``None`` (caller falls back to the vector score) when the axis
+    leaves no room for comparison or rendering/extraction fails.
+    """
+    import fitz
+    import numpy as np
+
+    MM_TO_PT = 72.0 / 25.4
+    try:
+        page_h_mm = page_rect.height * MM_PER_PT
+        radius = min(axis_y_mm, page_h_mm - axis_y_mm)
+        if radius < 15.0 or axis_span_mm <= 0.0:
+            return None
+        clip = fitz.Rect(0.0, (axis_y_mm - radius) * MM_TO_PT,
+                         page_rect.width, (axis_y_mm + radius) * MM_TO_PT)
+        with fitz.open(pdf_path) as doc:
+            page = doc.load_page(0)
+            pix = page.get_pixmap(dpi=150, clip=clip, colorspace=fitz.csGRAY)
+        arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+        dark = arr < 200
+        row = dark.sum(axis=1).astype(np.float64)
+        half = len(row) // 2
+        if half < 4:
+            return None
+        above = row[:half]
+        below = row[half:2 * half][::-1]
+        above_ink = float(above.sum())
+        below_ink = float(below.sum())
+        if above_ink > 0.0 and below_ink > 0.0:
+            return float(min(1.0, 2.0 * np.minimum(above, below).sum() / (above_ink + below_ink)))
+        inked_cols = (np.nonzero(dark[:half].any(axis=0))[0] if above_ink > 0.0
+                      else np.nonzero(dark[half:2 * half].any(axis=0))[0])
+        if inked_cols.size < 2:
+            return None
+        ppm = 150.0 / 25.4  # px per mm
+        span_px = (inked_cols[-1] - inked_cols[0] + 1) / ppm
+        return float(min(1.0, span_px / axis_span_mm))
+    except Exception:
+        return None
 
 def _chain_axis(horiz: list[tuple[float, float, float]],
                 min_span_mm: float = CHAIN_MIN_SPAN_MM) -> tuple[float, float] | None:
@@ -215,6 +293,7 @@ def classify_pdf(path: str | Path) -> Evidence:
             page = doc.load_page(0)
             words = list(page.get_text("words"))
             drawings = list(page.get_drawings())
+            page_rect = page.rect
             page_w = page.rect.width * MM_PER_PT
     except Exception as exc:
         return Evidence(path, "UNREADABLE", reason=f"fitz failed: {exc.__class__.__name__}: {exc}")
@@ -278,9 +357,21 @@ def classify_pdf(path: str | Path) -> Evidence:
 
     # --- revolution-layout evidence (mirror or one-sided coverage)
     if axis_y is not None:
-        ev.symmetry_score = round(_symmetry(sym_segments, axis_y, axis_span), 3)
+        ev.axis_y_mm = round(axis_y, 1)
+        ev.axis_span_mm = round(axis_span, 1)
+        sym_r = _symmetry_raster(path, page_rect, axis_y, axis_span)
+        if sym_r is not None:
+            ev.symmetry_score = round(sym_r, 3)
+            ev.sym_source = "raster"
+        else:
+            ev.symmetry_score = round(_symmetry(sym_segments, axis_y, axis_span), 3)
+            ev.sym_source = "vector"
 
     ev.views_count = _views_count(all_boxes)
+    if all_boxes:
+        big = _big_clusters(all_boxes)
+        ev.views_detail = ";".join(
+            f"{(b[2] - b[0]):.0f}x{(b[3] - b[1]):.0f}@({b[0]:.0f},{b[1]:.0f})" for b in big[:6])
 
     if ev.dim_token_count == 0 and ev.dia_count == 0:
         ev.verdict = "NO_DIMENSIONS"
@@ -378,7 +469,8 @@ def classify_file(path: str | Path) -> Evidence:
 # csv                                                                          #
 # --------------------------------------------------------------------------- #
 CSV_FIELDS = ["id", "path", "verdict", "axis_score", "symmetry_score", "dia_count",
-              "dim_token_count", "views_count", "text_layer", "reason"]
+              "dim_token_count", "views_count", "text_layer", "reason",
+              "axis_y_mm", "axis_span_mm", "sym_source", "views_detail"]
 
 
 def write_csv(rows: list[Evidence], out_path: Path) -> None:

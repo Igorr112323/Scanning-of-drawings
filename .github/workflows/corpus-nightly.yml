@@ -120,13 +120,31 @@ jobs:
           from pathlib import Path
           root = Path("data/corpus")
 
+          def _esc(s):
+              return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          # GitHub caps check-run annotation messages at ~4096 bytes; a single
+          # long evidence block would silently lose its tail. Split every
+          # notice into <=3600-byte chunks with numbered titles.
           def notice(title, lines):
               if isinstance(lines, str):
-                  body = lines
-              else:
-                  body = "\n".join(str(x) for x in lines)
-              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print(f"::notice title={title}::{body}")
+                  lines = lines.splitlines()
+              body_lines: list[str] = []
+              size = 0
+              chunk = 0
+              for line in lines:
+                  line = str(line)
+                  esc_len = len(_esc(line)) + 2
+                  if body_lines and size + esc_len > 3400:
+                      chunk += 1
+                      print(f"::notice title={title}-{chunk}::{_esc(chr(10).join(body_lines))}")
+                      body_lines, size = [], 0
+                  body_lines.append(line)
+                  size += esc_len
+              if body_lines:
+                  chunk += 1
+                  suffix = f"-{chunk}" if chunk > 1 else ""
+                  print(f"::notice title={title}{suffix}::{_esc(chr(10).join(body_lines))}")
 
           manifest = {}
           mp = root / "manifest.jsonl"
@@ -253,7 +271,7 @@ jobs:
           for r in sorted(screening, key=lambda r: r['id']):
               if src_of(r['id']) != "zenodo_open_mech":
                   continue
-              e_lines.append(f"{r['id']}: verdict={r['verdict']} axis={r['axis_score']} sym={r['symmetry_score']} views={r['views_count']} dia={r['dia_count']} dim_tokens={r['dim_token_count']} text_layer={r['text_layer']} reason={r['reason']}")
+              e_lines.append(f"{r['id']}: verdict={r['verdict']} axis={r['axis_score']} sym={r['symmetry_score']}({r.get('sym_source','?')}) y={r.get('axis_y_mm','?')} span={r.get('axis_span_mm','?')} views={r['views_count']}[{r.get('views_detail','')}] dia={r['dia_count']} dim_tokens={r['dim_token_count']} text_layer={r['text_layer']} reason={r['reason']}")
           if e_lines:
               notice("CORPUS-ZENODO-EVIDENCE", e_lines)
 
