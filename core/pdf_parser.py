@@ -34,6 +34,13 @@ MM_PER_PT = 25.4 / 72.0
 # stroke-width thresholds in points (GOST: main line 0.5–1.4 mm, thin lines ≤ 0.4 mm)
 _CONTOUR_MIN_WIDTH_PT = 1.2
 
+_PDF_STATS: dict = {}
+
+
+def pdf_stats() -> dict:
+    """Snapshot of the last parse_pdf() walk (CI telemetry)."""
+    return dict(_PDF_STATS)
+
 
 def _uid(prefix: str, n: int) -> str:
     return f"{prefix}-{n:04d}"
@@ -115,24 +122,6 @@ def _cubic_chords(p0, c1, c2, p3, tol_pt: float = 0.3, max_depth: int = 12) -> l
     return out
 
 
-    def rec(a, c, b, depth: int) -> None:
-        if depth >= max_depth or _dist_point_chord(c, a, b) <= tol_pt:
-            out.append(b)
-            return
-        m01 = _mid(a, c); m12 = _mid(c, b)
-        m012 = _mid(m01, m12)
-        rec(a, m01, m012, depth + 1)
-        rec(m012, m12, b, depth + 1)
-
-    def _mid(a, c):
-        if isinstance(a, tuple):
-            return ((a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0)
-        return fitz.Point((a.x + c.x) / 2.0, (a.y + c.y) / 2.0)
-
-    rec(p0, cc, p2, 0)
-    return out
-
-
 def _text_elements(page: fitz.Page, start_index: int) -> list[VectorElement]:
     elements: list[VectorElement] = []
     words = page.get_text("words")  # (x0, y0, x1, y1, word, block, line, word_no)
@@ -173,12 +162,20 @@ def parse_pdf(path: str | Path) -> Drawing:
     elements: list[VectorElement] = []
     n = 0
 
+    from collections import Counter
+
+    _PDF_STATS.clear()
+    _PDF_STATS.update(fill_paths_skipped=0, stroke_paths=0, width_hist=Counter())
+
     for drawing in page.get_drawings():
         width = drawing.get("width") or 0.0
         dashes = (drawing.get("dashes") or "").strip()
         dash = None if dashes in ("", "[] 0") else dashes
         if drawing.get("fill") is not None and drawing.get("color") is None:
+            _PDF_STATS["fill_paths_skipped"] += 1
             continue  # filled arrowhead / hatch fill — no stroked geometry
+        _PDF_STATS["stroke_paths"] += 1
+        _PDF_STATS["width_hist"][round(width * 4) / 4] += 1  # 0.25pt buckets
         for item in drawing.get("items", []):
             if item[0] == "l":  # line segment
                 elements.append(_line_element(_uid("L", n), item[1], item[2], width, dash))
@@ -229,5 +226,7 @@ def parse_pdf(path: str | Path) -> Drawing:
         elements=elements,
         axis_y=axis_y,
     )]
+    wh = _PDF_STATS.pop("width_hist", Counter())
+    _PDF_STATS["width_hist"] = ",".join(f"{w}pt:{n}" for w, n in sorted(wh.items()))
     doc.close()
     return drawing_obj

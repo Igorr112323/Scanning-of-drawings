@@ -212,7 +212,10 @@ jobs:
               pdbg = r.get("profile_debug") or {}
               zlines.append(f"{r['id']}: status={r['status']} dims={r.get('dims_confident')}/{r.get('dims_total')} contra={r.get('contradictions')} sig={r.get('error_signature')} vol_err_pct={gt.get('volume_error_pct')} wall_s={r.get('wall_time_s')}")
               if pdbg:
-                  zlines.append(f"    dbg axis_y={pdbg.get('axis_y')} el={pdbg.get('elements')} raw={pdbg.get('raw_lines')} merged={pdbg.get('merged_lines')} iv={pdbg.get('intervals')} -> {pdbg.get('status')}" + (f" @x=[{pdbg.get('gap_at'):.1f},{pdbg.get('gap_before'):.1f}]" if pdbg.get("gap_at") is not None else ""))
+                  zlines.append(f"    dbg axis_y={pdbg.get('axis_y')} el={pdbg.get('elements')} raw={pdbg.get('raw_lines')} merged={pdbg.get('merged_lines')} iv={pdbg.get('intervals')} -> {pdbg.get('status')}" + (f" @x=[{pdbg.get('gap_at'):.1f},{pdbg.get('gap_before'):.1f}]" if pdbg.get("gap_at") is not None else "") + (f" gap_elems={pdbg.get('gap_elems')} by_type={pdbg.get('gap_by_type')} max_w_mm={pdbg.get('gap_max_width_mm')}" if pdbg.get("gap_elems") is not None else ""))
+              pstats = r.get("pdf_stats") or {}
+              if pstats:
+                  zlines.append(f"    pdf fill_skipped={pstats.get('fill_paths_skipped')} stroke_paths={pstats.get('stroke_paths')} widths={pstats.get('width_hist')}")
           if zlines:
               notice("ZENODO-RESULTS", zlines)
 

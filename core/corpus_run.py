@@ -291,6 +291,14 @@ def _process_file(path: Path, gt_step: Path | None) -> dict:
                     record["profile_debug"] = dbg
             except Exception:
                 pass
+            try:
+                from core.pdf_parser import pdf_stats
+
+                stats = pdf_stats()
+                if stats:
+                    record["pdf_stats"] = stats
+            except Exception:
+                pass
             record["error_signature"] = "no revolution profile reconstructed"
             return record
         if record["contradiction_errors"]:

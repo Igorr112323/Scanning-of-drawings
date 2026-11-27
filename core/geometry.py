@@ -408,7 +408,19 @@ def build_half_profile(
         mid = (a + b) / 2.0
         covering = [ln for ln in lines if ln[0] - r_tol < mid < ln[1] + r_tol]
         if not covering:
-            _PROFILE_DEBUG.update(status="gap", gap_at=a, gap_before=b)
+            from collections import Counter
+
+            others = [e for e in elements
+                      if len(e.points) == 2
+                      and e.type is not ElementType.TEXT
+                      and min(e.points[0][0], e.points[1][0]) <= b
+                      and max(e.points[0][0], e.points[1][0]) >= a]
+            by_type = Counter(e.type.name for e in others)
+            widths = [getattr(e, "stroke_width", 0.0) or 0.0 for e in others]
+            _PROFILE_DEBUG.update(status="gap", gap_at=a, gap_before=b,
+                                  gap_elems=len(others),
+                                  gap_by_type=dict(by_type),
+                                  gap_max_width_mm=(round(max(widths), 3) if widths else None))
             return [], None  # gap in the outline → not a simple revolution body
         intervals.append((a, b, covering))
 
