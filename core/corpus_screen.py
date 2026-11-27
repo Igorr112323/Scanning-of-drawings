@@ -94,12 +94,19 @@ def _views_count(boxes: list[tuple[float, float, float, float]]) -> int:
             i = parent[i]
         return i
 
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            a, b = boxes[i], boxes[j]
-            if not (a[2] + inflate < b[0] or b[2] + inflate < a[0]
-                    or a[3] + inflate < b[1] or b[3] + inflate < a[1]):
-                ri, rj = find(i), find(j)
+    # sweep over x — with thousands of stroke boxes (acad pages split dash-dot
+    # axes into many segments) the naive O(N^2) blows up to minutes per page
+    order = sorted(range(len(boxes)), key=lambda i: boxes[i][0])
+    sboxes = [boxes[i] for i in order]
+    remap = order
+    for i in range(len(sboxes)):
+        a = sboxes[i]
+        for j in range(i + 1, len(sboxes)):
+            b = sboxes[j]
+            if b[0] > a[2] + inflate:
+                break
+            if not (a[3] + inflate < b[1] or b[3] + inflate < a[1]):
+                ri, rj = find(remap[i]), find(remap[j])
                 if ri != rj:
                     parent[ri] = rj
     clusters: dict[int, list[int]] = {}
@@ -244,6 +251,13 @@ def classify_image(path: str | Path) -> Evidence:
         ev.reason = "blank image (ink < 0.5%)"
         return ev
 
+    # screening on a downscaled copy — verdict-level evidence does not need
+    # full acad resolution, and 10 MP Hough transforms take minutes
+    scale = min(1.0, 1600.0 / max(h, w))
+    if scale < 1.0:
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        h, w = image.shape
+
     binary = (image < 200).astype(np.uint8) * 255
     edges = cv2.Canny(binary, 50, 150)
     lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=60,
@@ -326,7 +340,12 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         print(f"no files found under {root} — run core.dataset_fetch first", file=sys.stderr)
         return 3
-    rows = [classify_file(f) for f in files]
+    rows = []
+    for _i, _f in enumerate(files, 1):
+        import time as _time
+        _t0 = _time.perf_counter()
+        rows.append(classify_file(_f))
+        print(f"[screen {_i}/{len(files)}] {_f.stem}: {rows[-1].verdict} ({_time.perf_counter() - _t0:.2f}s)", file=sys.stderr)
     out_path = Path(args.out) if args.out else root / "screening.csv"
     write_csv(rows, out_path)
     print(summarize(rows))
