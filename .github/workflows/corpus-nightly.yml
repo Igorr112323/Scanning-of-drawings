@@ -72,7 +72,14 @@ jobs:
         run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv
 
       - name: Run pipeline on BODY_OF_REVOLUTION files
-        run: python -m core.corpus_run --corpus data/corpus --screening data/corpus/screening.csv --out data/corpus/results.jsonl --timeout 120
+        run: |
+          NORESUME=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "push trigger: fresh measurement — drop cached results.jsonl"
+            rm -f data/corpus/results.jsonl
+            NORESUME="--no-resume"
+          fi
+          python -m core.corpus_run --corpus data/corpus --screening data/corpus/screening.csv --out data/corpus/results.jsonl --timeout 120 $NORESUME 2>&1 | tee /tmp/corpus_run.log
 
       - name: Regenerate benchmark docs
         run: python -m core.corpus_report
@@ -133,8 +140,22 @@ jobs:
           screening = list(csv.DictReader(open(root / "screening.csv", encoding="utf-8"))) if (root / "screening.csv").exists() else []
           results = [json.loads(l) for l in (root / "results.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
 
+          stem_index = {}
+          for _rid, _rec in manifest.items():
+              stem_index[_rid] = _rec.get("source", "unknown")
+              stem_index.setdefault(Path(_rec.get("path") or "").stem, _rec.get("source", "unknown"))
+
           def src_of(rid):
-              return manifest.get(rid, {}).get("source", "unknown")
+              return stem_index.get(rid, "unknown")
+
+          # funnel diagnostics — sizes and the /tmp/corpus_run.log tail, so a
+          # blocked artifact/log host never hides where the funnel leaked
+          for _f in ("manifest.jsonl", "screening.csv", "results.jsonl"):
+              _p = root / _f
+              notice(f"FILE-{_f}", f"exists={_p.exists()} bytes={_p.stat().st_size if _p.exists() else '-'} lines={sum(1 for _ in open(_p,'rb')) if _p.exists() else '-'}")
+          lp = Path("/tmp/corpus_run.log")
+          if lp.exists():
+              notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-12000:])
 
           lines = [f"manifest records: {len(manifest)}  by_source={dict(Counter(r.get('source','?') for r in manifest.values()))}",
                    f"screened: {len(screening)}"]

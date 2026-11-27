@@ -448,6 +448,14 @@ def main(argv: list[str] | None = None) -> int:
         selected = dict(list(sorted(selected.items()))[: args.limit])
 
     manifest = _load_manifest(manifest_path)
+    # manifest ids are namespaced (e.g. "zenodo-page-page_001") while pipeline
+    # ids are file stems ("page_001") — join on the path stem as well or the
+    # gt_3d match can never fire
+    manifest_by_stem: dict[str, dict] = {}
+    for _mid, _rec in manifest.items():
+        _p = _rec.get("path") or ""
+        if _p:
+            manifest_by_stem.setdefault(Path(_p).stem, _rec)
     step_files = list(corpus.rglob("*.step")) + list(corpus.rglob("*.stp"))
 
     print(f"corpus: {len(files)} file(s); selected {len(selected)} for verdicts {sorted(wanted)}"
@@ -459,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     import datetime
     with open(results_path, "a", encoding="utf-8") as out:
         for i, (fid, path) in enumerate(sorted(selected.items()), 1):
-            rec = manifest.get(fid, {})
+            rec = manifest.get(fid) or manifest_by_stem.get(fid, {})
             gt_name = rec.get("gt_3d")
             gt_step = next((p for p in step_files if p.name == gt_name), None) if gt_name else None
             t0 = time.perf_counter()
