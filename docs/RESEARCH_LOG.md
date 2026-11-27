@@ -180,6 +180,32 @@ pipeline re-measured. New funnel: **81 screened → 2 BODY_OF_REVOLUTION**
   `qu` → closed 4-edge shape (like `re`); `_quad_chords` removed; regression
   test `test_quad_item_parsed_as_closed_shape`. Local: 145 passed.
 
+## 3c. Post-mortem #3 — furniture leaked into the explicit-AXIS path (local, 2026-11-27)
+
+A synthetic sheet with a **genuinely dashed stamp rule at the bottom**
+(`dashes="[10 4] 0"` — the case the widthless chain fallback cannot see) was
+parsed locally: the centre-line classifier picked the furniture rule as the
+axis (y=197.6 mm on a 209.9 mm sheet, i.e. `y > 0.85 * page_height`) and the
+part collapsed to a 2-interval sliver.
+
+Fixes in the same push:
+- `find_axis`: the bottom-strip (`y > 0.85 * page_height`) guard now also
+  drops a **single-stroke AXIS** candidate, not only the chain.
+- The chain was briefly made to outrank a single AXIS stroke on ties —
+  **reverted**: on `scan_test.png` the chain's weighted-average y sits
+  ~0.3 mm below the explicit centre line, which broke
+  `test_scan_volume_matches_ground_truth` (−1.5 % volume). Explicit centre
+  line wins; the chain stays purely a fallback.
+- `build_half_profile` telemetry (`_PROFILE_DEBUG` → `profile_debug()`): the
+  NO_DIMS signature is no longer opaque — records now carry
+  `axis_y/elements/raw_lines/merged_lines/intervals/status` (and the failing
+  interval for gaps) in the pipeline record + `ZENODO-RESULTS` annotation.
+- CI emits the debug as a second annotation line per candidate.
+
+Lesson, third time: furniture must die on **every** detection path, not only
+the one that trips first. Numerical guards on one path while the sibling
+path stays naive just move the crash two commits later.
+
 ## 4. Measured funnel (commit `339b96e`, check-run `140445276543`, 2026-11-26)
 
 | step | count | denominator / note |

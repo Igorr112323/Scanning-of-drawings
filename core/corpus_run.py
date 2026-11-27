@@ -281,6 +281,16 @@ def _process_file(path: Path, gt_step: Path | None) -> dict:
 
         if not drawing.profile:
             record["status"] = STATUS_NO_DIMS
+            # CI telemetry: why the outline walk failed (axis, line counts,
+            # missing-coverage interval) instead of an opaque label
+            try:
+                from core.geometry import profile_debug
+
+                dbg = profile_debug()
+                if dbg:
+                    record["profile_debug"] = dbg
+            except Exception:
+                pass
             record["error_signature"] = "no revolution profile reconstructed"
             return record
         if record["contradiction_errors"]:

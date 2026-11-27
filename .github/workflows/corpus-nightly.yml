@@ -209,7 +209,10 @@ jobs:
               if src_of(r["id"]) != "zenodo_open_mech":
                   continue
               gt = r.get("gt") or {}
+              pdbg = r.get("profile_debug") or {}
               zlines.append(f"{r['id']}: status={r['status']} dims={r.get('dims_confident')}/{r.get('dims_total')} contra={r.get('contradictions')} sig={r.get('error_signature')} vol_err_pct={gt.get('volume_error_pct')} wall_s={r.get('wall_time_s')}")
+              if pdbg:
+                  zlines.append(f"    dbg axis_y={pdbg.get('axis_y')} el={pdbg.get('elements')} raw={pdbg.get('raw_lines')} merged={pdbg.get('merged_lines')} iv={pdbg.get('intervals')} -> {pdbg.get('status')}" + (f" @x=[{pdbg.get('gap_at'):.1f},{pdbg.get('gap_before'):.1f}]" if pdbg.get("gap_at") is not None else ""))
           if zlines:
               notice("ZENODO-RESULTS", zlines)
 

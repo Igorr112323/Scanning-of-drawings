@@ -69,6 +69,16 @@ def detect_axis_chain(horiz: list[tuple[float, float, float]],
     return best
 
 
+
+
+_PROFILE_DEBUG: dict[str, object] = {}
+
+
+def profile_debug() -> dict:
+    """Snapshot of the last build_half_profile decision path (CI telemetry)."""
+    return dict(_PROFILE_DEBUG)
+
+
 def find_axis_chain(elements: list["VectorElement"]):
     """Chain fallback for traced pages whose centre line carries no dash
     attribute: collect every horizontal stroke (any width) and run the
@@ -107,13 +117,20 @@ def find_axis(elements: list[VectorElement],
         else:
             best = ("vertical", (x0 + x1) / 2.0)
         best_len = length
-    if best[0] is not None:
-        return best
+    # a constant stamp rule at the very bottom of the sheet is furniture,
+    # not a revolution axis (seen on the zenodo sheets) — drop it, whichever
+    # detector surfaced it
+    if best[0] is not None and best[0] == "horizontal" and page_height_mm is not None \
+            and best[1] is not None and best[1] > 0.85 * page_height_mm:
+        best = (None, None)
+        best_len = 0.0
     chain = find_axis_chain(elements)
-    # a constant stamp-rule chain at the very bottom of the sheet is furniture,
-    # not a revolution axis (seen on the zenodo sheets); drop it
     if chain is not None and page_height_mm is not None and chain[0] > 0.85 * page_height_mm:
         chain = None
+    # an explicit dash-dot centre line (KOMPAS/CAD exports) is the axis,
+    # full stop; the chain is only a fallback for auto-traces with none
+    if best[0] is not None:
+        return best
     if chain is not None:
         return ("horizontal", chain[0])
     return best
@@ -325,6 +342,8 @@ def build_half_profile(
     Inner contours spanning the whole length at constant radius are recognised
     as bore walls: the part is hollow and the bore diameter is returned.
     """
+    _PROFILE_DEBUG.clear()
+    _PROFILE_DEBUG.update(axis_y=axis_y, elements=len(elements))
     r_tol = 0.01  # mm
     raw_lines: list[tuple[float, float, float, float]] = []  # xa, xb, y(xa), y(xb)
     breakpoints: set[float] = set()
@@ -345,6 +364,7 @@ def build_half_profile(
             continue
         raw_lines.append((xa, xb, ya, yb))
     lines = _union_parallel_edges(_merge_collinear(raw_lines))
+    _PROFILE_DEBUG.update(raw_lines=len(raw_lines), merged_lines=len(lines))
     breakpoints = set()
     for xa, xb, _, _ in lines:
         breakpoints.update((xa, xb))
@@ -355,6 +375,7 @@ def build_half_profile(
                 breakpoints.add(x0)  # vertical shoulders still split intervals
 
     if len(breakpoints) < 2:
+        _PROFILE_DEBUG.update(status="no_breakpoints")
         return [], None
     # breakpoints beyond the strokes carry no geometry — drop them (end slivers
     # from noise/fragment endpoints); real gaps between strokes stay fatal
@@ -362,6 +383,7 @@ def build_half_profile(
     x_hi = max(l[1] for l in lines)
     bps = [b for b in sorted(breakpoints) if b >= x_lo - 1e-9 and b <= x_hi + 1e-9]
     if len(bps) < 2:
+        _PROFILE_DEBUG.update(status="breakpoints_out_of_range")
         return [], None
 
     def _covering(x: float) -> list[tuple[float, float, float, float]]:
@@ -386,6 +408,7 @@ def build_half_profile(
         mid = (a + b) / 2.0
         covering = [ln for ln in lines if ln[0] - r_tol < mid < ln[1] + r_tol]
         if not covering:
+            _PROFILE_DEBUG.update(status="gap", gap_at=a, gap_before=b)
             return [], None  # gap in the outline → not a simple revolution body
         intervals.append((a, b, covering))
 
@@ -447,7 +470,9 @@ def build_half_profile(
 
     _trim("left")
     _trim("right")
+    _PROFILE_DEBUG.update(intervals=len(intervals))
     if not intervals:
+        _PROFILE_DEBUG.update(status="trimmed_empty")
         return [], None
 
     # Bore bookkeeping on the trimmed body. The bore wall must be ONE
@@ -495,7 +520,9 @@ def build_half_profile(
         profile.append(ProfilePoint(b, rb))
         prev_r = rb
     profile.append(ProfilePoint(intervals[-1][1], 0.0))
-    return _dedupe(profile), bore_diameter
+    profile = _dedupe(profile)
+    _PROFILE_DEBUG.update(status="ok", profile_points=len(profile))
+    return profile, bore_diameter
 
 
 def _dedupe(points: list[ProfilePoint]) -> list[ProfilePoint]:
