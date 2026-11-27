@@ -99,6 +99,88 @@ jobs:
           print(f"- Tier A (matched STEP): **{len(gt)}**")
           PY
 
+      # api.github.com is the only host reachable from the build sandbox
+      # (artifact/log hosts are egress-blocked there), so key evidence is
+      # surfaced as check-run annotations. jcrzd/ecado contribute aggregates
+      # only (no license metadata — not redistributable); zenodo is CC BY 4.0
+      # and its per-file rows are reported permissibly.
+      - name: Emit summary annotations
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv, json
+          from collections import Counter
+          from pathlib import Path
+          root = Path("data/corpus")
+
+          def notice(title, lines):
+              if isinstance(lines, str):
+                  body = lines
+              else:
+                  body = "\n".join(str(x) for x in lines)
+              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice title={title}::{body}")
+
+          manifest = {}
+          mp = root / "manifest.jsonl"
+          if mp.exists():
+              for line in mp.read_text(encoding="utf-8", errors="replace").splitlines():
+                  line = line.strip()
+                  if line:
+                      rec = json.loads(line)
+                      manifest[rec.get("id", "")] = rec
+
+          screening = list(csv.DictReader(open(root / "screening.csv", encoding="utf-8"))) if (root / "screening.csv").exists() else []
+          results = [json.loads(l) for l in (root / "results.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
+
+          def src_of(rid):
+              return manifest.get(rid, {}).get("source", "unknown")
+
+          lines = [f"manifest records: {len(manifest)}  by_source={dict(Counter(r.get('source','?') for r in manifest.values()))}",
+                   f"screened: {len(screening)}"]
+          for src in sorted({src_of(r['id']) for r in screening}):
+              sub = [r for r in screening if src_of(r['id']) == src]
+              lines.append(f"  screen[{src}] n={len(sub)} " + " ".join(f"{k}={v}" for k, v in Counter(r['verdict'] for r in sub).most_common()))
+          lines.append(f"processed (pipeline): {len(results)}")
+          for src in sorted({src_of(r['id']) for r in results}):
+              sub = [r for r in results if src_of(r['id']) == src]
+              lines.append(f"  pipeline[{src}] n={len(sub)} " + " ".join(f"{k}={v}" for k, v in Counter(r['status'] for r in sub).most_common()))
+          gt = [r for r in results if r.get("gt")]
+          if gt:
+              errs = [r["gt"].get("volume_error_pct") for r in gt if r["gt"].get("volume_error_pct") is not None]
+              def q(p):
+                  if not errs: return None
+                  s = sorted(errs); k = (len(s) - 1) * p; f = int(k)
+                  return s[f] + (s[f + 1] - s[f]) * (k - f) if f + 1 < len(s) else s[f]
+              lines.append(f"TierA matched={len(gt)} vol_err_pct n={len(errs)} p50={q(0.5)} p90={q(0.9)} max={max(errs) if errs else None}")
+          else:
+              lines.append("TierA matched=0 (no gt_3d rows)")
+          notice("CORPUS-SUMMARY", lines)
+
+          # Zenodo per-file rows (CC BY 4.0 — citable, attribution in docs).
+          zlines = []
+          for r in sorted(results, key=lambda r: r.get("id", "")):
+              if src_of(r["id"]) != "zenodo_open_mech":
+                  continue
+              gt = r.get("gt") or {}
+              zlines.append(
+                  f"{r['id']}: status={r['status']} verdict={r.get('verdict','')} "
+                  f"dims={r.get('dims_confident')}/{r.get('dims_total')} "
+                  f"contradictions={r.get('contradictions')} "
+                  f"vol_err_pct={gt.get('volume_error_pct')} "
+                  f"silhouette_iou={gt.get('silhouette_iou')} wall_s={r.get('wall_time_s')} sig={r.get('error_signature')}")
+          if zlines:
+              notice("CORPUS-ZENODO-PER-FILE", zlines)
+
+          sigs = Counter(r.get("error_signature") for r in results if r.get("error_signature"))
+          notice("CORPUS-ERROR-SIGNATURES", [f"{k}: {v}" for k, v in sigs.most_common(12)] or ["no error signatures (all OK or pre-pipeline failures)"])
+
+          for doc in ("docs/CORPUS_BENCHMARK.md", "docs/BUG_HARVEST.md"):
+              p = Path(doc)
+              if p.exists():
+                  notice(f"DOC-{Path(doc).name}", p.read_text(encoding="utf-8", errors="replace")[:16000])
+          PY
+
       - name: Upload corpus artifacts
         if: always()
         uses: actions/upload-artifact@v4
