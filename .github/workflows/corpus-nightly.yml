@@ -120,13 +120,11 @@ jobs:
           import fitz
 
           root = Path("data/corpus")
-          manifest = {}
-          for line in (root / "manifest.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
-              line = line.strip()
-              if line:
-                  r = json.loads(line)
-                  manifest[r.get("id", "")] = r
           results = [json.loads(l) for l in (root / "results.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
+          # locate corpus files by stem — robust to cache layout/renames
+          by_stem = {}
+          for p in root.rglob("*.pdf"):
+              by_stem.setdefault(p.stem, p)
 
           MM_TO_PT = 72.0 / 25.4
           COLS, ROWS = 74, 20
@@ -146,9 +144,9 @@ jobs:
               rid = r.get("id", "")
               if rid not in ANNOTATE:
                   continue
-              rec = manifest.get(rid) or {}
-              src_path = rec.get("path")
-              if not src_path or not Path(src_path).exists():
+              src_path = by_stem.get(rid)
+              if src_path is None:
+                  print(f"::notice title=DIAG-INK-{rid}::corpus pdf not found under data/corpus (stem={rid})")
                   continue
               gap_a, gap_b = dbg.get("gap_at"), dbg.get("gap_before")
               doc = fitz.open(src_path)
