@@ -171,6 +171,27 @@ jobs:
           for _f in ("manifest.jsonl", "screening.csv", "results.jsonl"):
               _p = root / _f
               notice(f"FILE-{_f}", f"exists={_p.exists()} bytes={_p.stat().st_size if _p.exists() else '-'} lines={sum(1 for _ in open(_p,'rb')) if _p.exists() else '-'}")
+          rp = root / "results.jsonl"
+          if rp.exists():
+              try:
+                  zrows = []
+                  for line in rp.read_text(encoding="utf-8", errors="replace").splitlines():
+                      if not line.strip():
+                          continue
+                      rid = json.loads(line).get("id", "")
+                      # zenodo rows are CC BY 4.0 — printable; jcrzd/ecado rows
+                      # would leak per-file internals of an unlicensed corpus, so
+                      # only an aggregate count is emitted for them.
+                      if src_of(rid) == "zenodo_open_mech":
+                          zrows.append(line)
+                      else:
+                          zrows.append(None)
+                  zc = [l for l in zrows if l]
+                  notice("RESULTS-JSONL", f"zenodo rows: {len(zc)} of {len(zrows)} total")
+                  if zc:
+                      notice("ZENODO-RESULTS", zc)
+              except Exception as exc:
+                  notice("ZENODO-RESULTS", f"failed to read results.jsonl: {exc!r}")
           lp = Path("/tmp/corpus_run.log")
           if lp.exists():
               notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-12000:])
