@@ -39,8 +39,12 @@ MIRROR_TOL_MM = 1.0       # mirror-match tolerance between halves
 CHAIN_MIN_PIECES = 4      # collinear pieces needed for a dash-dot chain
 CHAIN_MAX_GAP_MM = 8.0    # GOST dash-dot gaps are 1.5–3 mm; 8 mm is generous
 CHAIN_MIN_COVERAGE = 0.45 # dash-dot cadence is ~70-80% coverage
-CHAIN_Y_BAND_MM = 0.75    # segments in the same y band belong to one chain
-CHAIN_AXIS_SPAN = 0.45    # chain must span at least this fraction of the page width
+CHAIN_Y_BAND_MM = 3.0     # vectorized scans jitter; GOST text pitch is >=5 mm
+CHAIN_MIN_SPAN_MM = 120.0 # absolute — a revolution axis spans the view, not the page
+CHAIN_SCORE_FULL_MM = 250.0  # span at which the axis score saturates at 1.0
+VIEWS_MIN_W_MM = 40.0     # view-sized ink masses only; slivers/text are not views
+VIEWS_MIN_H_MM = 10.0
+MAX_VIEW_MASSES = 3       # a shaft may legitimately carry one side view
 
 _DIM_RE = re.compile(r"^(Ø|⌀|∅|Φ|%%c|R|M)?\s*\d{1,4}([.,]\d{1,4})?(\s*[xхX×].*)?$", re.IGNORECASE)
 _DIA_RE = re.compile(r"(Ø|⌀|∅|Φ|%%c)", re.IGNORECASE)
@@ -150,6 +154,51 @@ def _symmetry(segments: list[tuple[float, float, float, float]], axis_y: float,
     return min(1.0, span / axis_span)
 
 
+def _chain_axis(horiz: list[tuple[float, float, float]],
+                min_span_mm: float = CHAIN_MIN_SPAN_MM) -> tuple[float, float] | None:
+    """GOST centre lines whose dashes/dots are exported as separate thin
+    segments (auto-traced scans) carry no dash attribute at all — detect the
+    collinear chain itself: ≥4 pieces in one y band with ≤8 mm gaps and an
+    absolute span of at least `min_span_mm` (a revolution axis spans the
+    *view*, so page-width-relative thresholds are wrong for A2/A3 sheets).
+
+    Returns (axis_y_mm, span_mm) where axis_y_mm is the *mean* undisturbed y
+    of the winning pieces — band quantization must never leak into the mirror
+    symmetry comparison."""
+    bands: dict[int, list[tuple[float, float, float]]] = {}
+    for x0, y, x1 in horiz:
+        bands.setdefault(round(y / CHAIN_Y_BAND_MM), []).append((x0, y, x1))
+
+    best: tuple[float, float] | None = None
+
+    def qualify(run: list[tuple[float, float, float]]) -> None:
+        nonlocal best
+        pieces = len(run)
+        start = run[0][0]
+        end = max(s[2] for s in run)
+        span = end - start
+        cover = sum(s[2] - s[0] for s in run)
+        if pieces >= CHAIN_MIN_PIECES and span >= min_span_mm and cover / span >= CHAIN_MIN_COVERAGE:
+            axis_y = sum(s[1] for s in run) / pieces
+            if best is None or span > best[1]:
+                best = (axis_y, span)
+
+    for band, segs in bands.items():
+        segs.sort(key=lambda s: s[0])
+        run: list[tuple[float, float, float]] = [segs[0]]
+        run_end = segs[0][2]
+        for s in segs[1:]:
+            if s[0] - run_end <= CHAIN_MAX_GAP_MM:
+                run.append(s)
+                run_end = max(run_end, s[2])
+            else:
+                qualify(run)
+                run = [s]
+                run_end = s[2]
+        qualify(run)
+    return best
+
+
 # --------------------------------------------------------------------------- #
 # vector (PDF)                                                                 #
 # --------------------------------------------------------------------------- #
@@ -210,42 +259,6 @@ def classify_pdf(path: str | Path) -> Evidence:
         ev.reason = "blank page: no stroked geometry and no text"
         return ev
 
-    def _maybe_run(band, start, end, pieces, cover, best, page_width):
-        span = end - start
-        if pieces >= CHAIN_MIN_PIECES and span >= CHAIN_AXIS_SPAN * page_width \
-                and cover / span >= CHAIN_MIN_COVERAGE:
-            if best is None or span > best[2] - best[1]:
-                return (band, start, end, pieces, cover)
-        return best
-
-    def _chain_axis(horiz: list[tuple[float, float, float]], page_width: float):
-        """GOST centre lines whose dashes/dots are exported as separate thin
-        segments carry no dash attribute at all — detect the collinear chain
-        itself: ≥4 pieces in one y band, small gaps, long extent."""
-        bands: dict[int, list[tuple[float, float]]] = {}
-        for x0, y, x1 in horiz:
-            bands.setdefault(round(y / CHAIN_Y_BAND_MM), []).append((x0, x1))
-        best = None
-        for band, segs in bands.items():
-            segs.sort()
-            # find the longest gap-free run — sparse ink far from the chain
-            # must not disqualify an otherwise valid dash-dot chain
-            run_start, run_end = segs[0]
-            run_pieces = 1
-            run_cover = run_end - run_start
-
-            for x0, x1 in segs[1:]:
-                if x0 - run_end <= CHAIN_MAX_GAP_MM:
-                    run_end = max(run_end, x1)
-                    run_pieces += 1
-                    run_cover += x1 - x0
-                else:
-                    best = _maybe_run(band, run_start, run_end, run_pieces, run_cover, best, page_width)
-                    run_start, run_end = x0, x1
-                    run_pieces, run_cover = 1, x1 - x0
-            best = _maybe_run(band, run_start, run_end, run_pieces, run_cover, best, page_width)
-        return (best[0] * CHAIN_Y_BAND_MM, best[2] - best[1]) if best else None
-
     # --- axis: longest dashed horizontal span, capped at 1.0
     axis_y = None
     axis_span = 0.0
@@ -258,10 +271,10 @@ def classify_pdf(path: str | Path) -> Evidence:
     elif any(abs(s[2] - s[0]) > 0.45 * page_w for s in solid):
         ev.axis_score = 0.3  # long solid horizontal: weak evidence only
     if axis_y is None:
-        chain = _chain_axis(horiz_all, page_w)
+        chain = _chain_axis(horiz_all)
         if chain is not None:
             axis_y, axis_span = chain
-            ev.axis_score = round(min(1.0, axis_span / (CHAIN_AXIS_SPAN * page_w) * 0.6), 3)
+            ev.axis_score = round(min(1.0, axis_span / CHAIN_SCORE_FULL_MM), 3)
 
     # --- revolution-layout evidence (mirror or one-sided coverage)
     if axis_y is not None:
