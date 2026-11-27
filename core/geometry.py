@@ -417,10 +417,22 @@ def build_half_profile(
                       and max(e.points[0][0], e.points[1][0]) >= a]
             by_type = Counter(e.type.name for e in others)
             widths = [getattr(e, "stroke_width", 0.0) or 0.0 for e in others]
+            cont = [e for e in others if e.type is ElementType.CONTOUR]
+            horiz = vert = 0
+            maxrun = 0.0
+            for e in cont:
+                (ax, ay), (bx, by) = e.points
+                if abs(by - ay) <= 0.5:
+                    horiz += 1
+                if abs(bx - ax) <= 0.5:
+                    vert += 1
+                maxrun = max(maxrun, abs(bx - ax))
             _PROFILE_DEBUG.update(status="gap", gap_at=a, gap_before=b,
                                   gap_elems=len(others),
                                   gap_by_type=dict(by_type),
-                                  gap_max_width_mm=(round(max(widths), 3) if widths else None))
+                                  gap_max_width_mm=(round(max(widths), 3) if widths else None),
+                                  gap_contour_horiz=horiz, gap_contour_vert=vert,
+                                  gap_max_run=round(maxrun, 2))
             return [], None  # gap in the outline → not a simple revolution body
         intervals.append((a, b, covering))
 
