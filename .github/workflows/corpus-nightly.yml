@@ -120,27 +120,28 @@ jobs:
           from pathlib import Path
           root = Path("data/corpus")
 
+          # GitHub stores at most ~10 annotations per check-run; anything
+          # beyond the 10th is dropped silently. Emit the evidence that
+          # matters most, in priority order, compactly chunked.
           def _esc(s):
               return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
-          # GitHub caps check-run annotation messages at ~4096 bytes; a single
-          # long evidence block would silently lose its tail. Split every
-          # notice into <=3600-byte chunks with numbered titles.
           def notice(title, lines):
               if isinstance(lines, str):
                   lines = lines.splitlines()
-              body_lines: list[str] = []
-              size = 0
-              chunk = 0
+              body_lines, size, chunk = [], 0, 0
               for line in lines:
                   line = str(line)
-                  esc_len = len(_esc(line)) + 2
-                  if body_lines and size + esc_len > 3400:
-                      chunk += 1
-                      print(f"::notice title={title}-{chunk}::{_esc(chr(10).join(body_lines))}")
-                      body_lines, size = [], 0
-                  body_lines.append(line)
-                  size += esc_len
+                  # hard-split pathological single lines (tracebacks, JSON rows)
+                  slices = [line[i:i + 2000] for i in range(0, len(line), 2000)] or [""]
+                  for piece in slices:
+                      esc_len = len(_esc(piece)) + 2
+                      if body_lines and size + esc_len > 3400:
+                          chunk += 1
+                          print(f"::notice title={title}-{chunk}::{_esc(chr(10).join(body_lines))}")
+                          body_lines, size = [], 0
+                      body_lines.append(piece)
+                      size += esc_len
               if body_lines:
                   chunk += 1
                   suffix = f"-{chunk}" if chunk > 1 else ""
@@ -154,7 +155,6 @@ jobs:
                   if line:
                       rec = json.loads(line)
                       manifest[rec.get("id", "")] = rec
-
           screening = list(csv.DictReader(open(root / "screening.csv", encoding="utf-8"))) if (root / "screening.csv").exists() else []
           results = [json.loads(l) for l in (root / "results.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
 
@@ -166,138 +166,12 @@ jobs:
           def src_of(rid):
               return stem_index.get(rid, "unknown")
 
-          # funnel diagnostics — sizes and the /tmp/corpus_run.log tail, so a
-          # blocked artifact/log host never hides where the funnel leaked
-          for _f in ("manifest.jsonl", "screening.csv", "results.jsonl"):
-              _p = root / _f
-              notice(f"FILE-{_f}", f"exists={_p.exists()} bytes={_p.stat().st_size if _p.exists() else '-'} lines={sum(1 for _ in open(_p,'rb')) if _p.exists() else '-'}")
-          rp = root / "results.jsonl"
-          if rp.exists():
-              try:
-                  zrows = []
-                  for line in rp.read_text(encoding="utf-8", errors="replace").splitlines():
-                      if not line.strip():
-                          continue
-                      rid = json.loads(line).get("id", "")
-                      # zenodo rows are CC BY 4.0 — printable; jcrzd/ecado rows
-                      # would leak per-file internals of an unlicensed corpus, so
-                      # only an aggregate count is emitted for them.
-                      if src_of(rid) == "zenodo_open_mech":
-                          zrows.append(line)
-                      else:
-                          zrows.append(None)
-                  zc = [l for l in zrows if l]
-                  notice("RESULTS-JSONL", f"zenodo rows: {len(zc)} of {len(zrows)} total")
-                  if zc:
-                      notice("ZENODO-RESULTS", zc)
-              except Exception as exc:
-                  notice("ZENODO-RESULTS", f"failed to read results.jsonl: {exc!r}")
-          lp = Path("/tmp/corpus_run.log")
-          if lp.exists():
-              notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-12000:])
-          sp = Path("/tmp/screen.log")
-          if sp.exists():
-              notice("SCREEN-LOG", sp.read_text(encoding="utf-8", errors="replace")[-5000:])
-          jp = Path("/tmp/jcrzd.log")
-          if jp.exists():
-              notice("JCRZD-LOG", jp.read_text(encoding="utf-8", errors="replace")[-3000:])
+          zenodo = [r for r in screening if src_of(r["id"]) == "zenodo_open_mech"]
+          jcrzd = [r for r in screening if src_of(r["id"]) == "hf_jcrzd"]
 
-          # per-page pymupdf drawing-type census — WHY is there no horizontal
-          # geometry? items histogram, horizontal line/curve counts, stroke widths
-          dlines = []
-          try:
-              import fitz, collections
-
-              # focused forensics on the pathological pages: horizontal segment
-              # length distribution + qualifying-run census at several band widths
-              for name in ("page_003", "page_011", "page_014", "page_022"):
-                  pdf = root / "zenodo_open_mech" / "pages" / f"{name}.pdf"
-                  if not pdf.exists():
-                      continue
-                  with fitz.open(pdf) as doc:
-                      page = doc[0]
-                      hsegs = []
-                      for dr in page.get_drawings():
-                          for it in dr.get("items", []):
-                              if it[0] != "l":
-                                  continue
-                              p1, p2 = it[1], it[2]
-                              if abs(p2.y - p1.y) * 0.3528 <= 0.5:
-                                  x0 = min(p1.x, p2.x) * 0.3528
-                                  x1 = max(p1.x, p2.x) * 0.3528
-                                  hsegs.append((x0, (p1.y + p2.y) / 2 * 0.3528, x1 - x0))
-                      lens = sorted(s[2] for s in hsegs)
-
-                      def q(p):
-                          return lens[int(len(lens) * p)] if lens else 0.0
-
-                      dlines.append(f"{name}: n={len(hsegs)} len p10={q(0.1):.2f} p50={q(0.5):.2f} p90={q(0.9):.2f} max={(lens[-1] if lens else 0):.1f}mm")
-                      for band_h in (0.75, 2.0, 4.0):
-                          bands = {}
-                          for x0, y, ln in hsegs:
-                              bands.setdefault(round(y / band_h), []).append((x0, x0 + ln))
-                          qual = 0
-                          best_span = 0.0
-                          for band, segs in bands.items():
-                              if len(segs) < 4:
-                                  continue
-                              segs.sort()
-                              rs, re_ = segs[0]
-                              pcs, cover = 1, segs[0][1] - segs[0][0]
-                              for s, e in segs[1:]:
-                                  if s - re_ <= 8.0:
-                                      re_ = max(re_, e); pcs += 1; cover += e - s
-                                  else:
-                                      span = re_ - rs
-                                      if span >= 0.45 * 297 and cover / span >= 0.45 and pcs >= 4:
-                                          qual += 1; best_span = max(best_span, span)
-                                      rs, re_ = s, e; pcs, cover = 1, e - s
-                              span = re_ - rs
-                              if span >= 0.45 * 297 and cover / span >= 0.45 and pcs >= 4:
-                                  qual += 1; best_span = max(best_span, span)
-                          dlines.append(f"{name}: band={band_h}mm qualifying-runs={qual} best_span={best_span:.0f}mm")
-              for pdf in sorted((root / "zenodo_open_mech" / "pages").glob("page_*.pdf")):
-                  with fitz.open(pdf) as doc:
-                      page = doc[0]
-                      counts = collections.Counter()
-                      horiz_l = 0
-                      horiz_c = 0
-                      widths = collections.Counter()
-                      for dr in page.get_drawings():
-                          widths[round(dr.get("width") or 0.0, 2)] += 1
-                          for it in dr.get("items", []):
-                              counts[it[0]] += 1
-                              if it[0] == "l":
-                                  p1, p2 = it[1], it[2]
-                                  if abs(p2.y - p1.y) * 0.3528 <= 0.5:
-                                      horiz_l += 1
-                              elif it[0] == "c":
-                                  ys = [it[1].y, it[2].y, it[3].y, it[4].y]
-                                  if max(ys) - min(ys) <= 1.4:
-                                      horiz_c += 1
-                      dlines.append(f"{pdf.stem}: items={dict(counts)} horiz_l={horiz_l} horiz_c={horiz_c} widths={dict(widths.most_common(5))}")
-          except Exception as exc:
-              dlines.append(f"diagnostics failed: {exc!r}")
-          if dlines:
-              notice("CORPUS-PDF-DIAGNOSTICS", dlines)
-
-          # jcrzd rows: verdict + reason (diagnostics only — aggregates/labels,
-          # no per-file evidence publication for the unlicensed source)
-          jlines = [f"{r['id']}: {r['verdict']} — {r['reason']}" for r in screening if src_of(r['id']) == "hf_jcrzd"]
-          if jlines:
-              notice("CORPUS-JCRZD-DIAG", jlines[:10])
-
-          # per-file screening evidence for zenodo rows (CC BY 4.0 — citable)
-          e_lines = []
-          for r in sorted(screening, key=lambda r: r['id']):
-              if src_of(r['id']) != "zenodo_open_mech":
-                  continue
-              e_lines.append(f"{r['id']}: verdict={r['verdict']} axis={r['axis_score']} sym={r['symmetry_score']}({r.get('sym_source','?')}) y={r.get('axis_y_mm','?')} span={r.get('axis_span_mm','?')} views={r['views_count']}[{r.get('views_detail','')}] dia={r['dia_count']} dim_tokens={r['dim_token_count']} text_layer={r['text_layer']} reason={r['reason']}")
-          if e_lines:
-              notice("CORPUS-ZENODO-EVIDENCE", e_lines)
-
+          # 1. headline funnel (always first)
           lines = [f"manifest records: {len(manifest)}  by_source={dict(Counter(r.get('source','?') for r in manifest.values()))}",
-                   f"screened: {len(screening)}"]
+                   f"screened: {len(screening)} (zenodo {len(zenodo)}, jcrzd {len(jcrzd)})"]
           for src in sorted({src_of(r['id']) for r in screening}):
               sub = [r for r in screening if src_of(r['id']) == src]
               lines.append(f"  screen[{src}] n={len(sub)} " + " ".join(f"{k}={v}" for k, v in Counter(r['verdict'] for r in sub).most_common()))
@@ -308,8 +182,10 @@ jobs:
           gt = [r for r in results if r.get("gt")]
           if gt:
               errs = [r["gt"].get("volume_error_pct") for r in gt if r["gt"].get("volume_error_pct") is not None]
+
               def q(p):
-                  if not errs: return None
+                  if not errs:
+                      return None
                   s = sorted(errs); k = (len(s) - 1) * p; f = int(k)
                   return s[f] + (s[f + 1] - s[f]) * (k - f) if f + 1 < len(s) else s[f]
               lines.append(f"TierA matched={len(gt)} vol_err_pct n={len(errs)} p50={q(0.5)} p90={q(0.9)} max={max(errs) if errs else None}")
@@ -317,28 +193,34 @@ jobs:
               lines.append("TierA matched=0 (no gt_3d rows)")
           notice("CORPUS-SUMMARY", lines)
 
-          # Zenodo per-file rows (CC BY 4.0 — citable, attribution in docs).
+          # 2. zenodo per-page compact evidence (CC BY 4.0 — citable)
+          e_lines = [f"{r['id']}: {r['verdict'][:14]} ax={r['axis_score']} sym={r['symmetry_score']}({r.get('sym_source','?')[:6]}) v={r['views_count']} Ø={r['dia_count']} T={r['dim_token_count']}"
+                     for r in sorted(zenodo, key=lambda r: r["id"])]
+          notice("CORPUS-ZENODO-EVIDENCE", e_lines)
+
+          # 3. zenodo per-page diagnostics — axis=0.700 / views=4 investigation
+          d_lines = [f"{r['id']}: y={r.get('axis_y_mm','?')} span={r.get('axis_span_mm','?')} views=[{r.get('views_detail','')[:80]}]"
+                     for r in sorted(zenodo, key=lambda r: r["id"])]
+          notice("CORPUS-ZENODO-DIAG", d_lines)
+
+          # 4. zenodo pipeline rows (CC BY 4.0); jcrzd stays aggregate-only
           zlines = []
           for r in sorted(results, key=lambda r: r.get("id", "")):
               if src_of(r["id"]) != "zenodo_open_mech":
                   continue
               gt = r.get("gt") or {}
-              zlines.append(
-                  f"{r['id']}: status={r['status']} verdict={r.get('verdict','')} "
-                  f"dims={r.get('dims_confident')}/{r.get('dims_total')} "
-                  f"contradictions={r.get('contradictions')} "
-                  f"vol_err_pct={gt.get('volume_error_pct')} "
-                  f"silhouette_iou={gt.get('silhouette_iou')} wall_s={r.get('wall_time_s')} sig={r.get('error_signature')}")
+              zlines.append(f"{r['id']}: status={r['status']} dims={r.get('dims_confident')}/{r.get('dims_total')} contra={r.get('contradictions')} sig={r.get('error_signature')} vol_err_pct={gt.get('volume_error_pct')} wall_s={r.get('wall_time_s')}")
           if zlines:
-              notice("CORPUS-ZENODO-PER-FILE", zlines)
+              notice("ZENODO-RESULTS", zlines)
 
-          sigs = Counter(r.get("error_signature") for r in results if r.get("error_signature"))
-          notice("CORPUS-ERROR-SIGNATURES", [f"{k}: {v}" for k, v in sigs.most_common(12)] or ["no error signatures (all OK or pre-pipeline failures)"])
+          # 5. pipeline log tail — post-mortem fodder
+          lp = Path("/tmp/corpus_run.log")
+          if lp.exists():
+              notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-1500:])
 
-          for doc in ("docs/CORPUS_BENCHMARK.md", "docs/BUG_HARVEST.md"):
-              p = Path(doc)
-              if p.exists():
-                  notice(f"DOC-{Path(doc).name}", p.read_text(encoding="utf-8", errors="replace")[:16000])
+          # 6. jcrzd verdicts — aggregates only (unlicensed corpus)
+          if jcrzd:
+              notice("CORPUS-JCRZD-DIAG", f"n={len(jcrzd)} verdicts={dict(Counter(r['verdict'] for r in jcrzd))} (aggregate only; unlicensed corpus)")
           PY
 
       - name: Upload corpus artifacts

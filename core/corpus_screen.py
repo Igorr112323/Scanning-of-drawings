@@ -28,6 +28,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.geometry import CHAIN_SCORE_FULL_MM, detect_axis_chain as _chain_axis
+
 VERDICTS = ("BODY_OF_REVOLUTION", "NOT_SUPPORTED", "UNREADABLE", "NO_DIMENSIONS")
 
 MIN_TEXT_TOKENS = 2
@@ -36,12 +38,6 @@ AXIS_MIN = 0.6
 RASTER_AXIS_MIN = 0.5
 MIN_IMAGE_SIDE = 640      # px — quality gate for scans
 MIRROR_TOL_MM = 1.0       # mirror-match tolerance between halves
-CHAIN_MIN_PIECES = 4      # collinear pieces needed for a dash-dot chain
-CHAIN_MAX_GAP_MM = 8.0    # GOST dash-dot gaps are 1.5–3 mm; 8 mm is generous
-CHAIN_MIN_COVERAGE = 0.45 # dash-dot cadence is ~70-80% coverage
-CHAIN_Y_BAND_MM = 3.0     # vectorized scans jitter; GOST text pitch is >=5 mm
-CHAIN_MIN_SPAN_MM = 120.0 # absolute — a revolution axis spans the view, not the page
-CHAIN_SCORE_FULL_MM = 250.0  # span at which the axis score saturates at 1.0
 VIEWS_MIN_W_MM = 40.0     # view-sized ink masses only; slivers/text are not views
 VIEWS_MIN_H_MM = 10.0
 MAX_VIEW_MASSES = 3       # a shaft may legitimately carry one side view
@@ -231,51 +227,6 @@ def _symmetry_raster(pdf_path: str, page_rect, axis_y_mm: float,
         return float(min(1.0, span_px / axis_span_mm))
     except Exception:
         return None
-
-def _chain_axis(horiz: list[tuple[float, float, float]],
-                min_span_mm: float = CHAIN_MIN_SPAN_MM) -> tuple[float, float] | None:
-    """GOST centre lines whose dashes/dots are exported as separate thin
-    segments (auto-traced scans) carry no dash attribute at all — detect the
-    collinear chain itself: ≥4 pieces in one y band with ≤8 mm gaps and an
-    absolute span of at least `min_span_mm` (a revolution axis spans the
-    *view*, so page-width-relative thresholds are wrong for A2/A3 sheets).
-
-    Returns (axis_y_mm, span_mm) where axis_y_mm is the *mean* undisturbed y
-    of the winning pieces — band quantization must never leak into the mirror
-    symmetry comparison."""
-    bands: dict[int, list[tuple[float, float, float]]] = {}
-    for x0, y, x1 in horiz:
-        bands.setdefault(round(y / CHAIN_Y_BAND_MM), []).append((x0, y, x1))
-
-    best: tuple[float, float] | None = None
-
-    def qualify(run: list[tuple[float, float, float]]) -> None:
-        nonlocal best
-        pieces = len(run)
-        start = run[0][0]
-        end = max(s[2] for s in run)
-        span = end - start
-        cover = sum(s[2] - s[0] for s in run)
-        if pieces >= CHAIN_MIN_PIECES and span >= min_span_mm and cover / span >= CHAIN_MIN_COVERAGE:
-            axis_y = sum(s[1] for s in run) / pieces
-            if best is None or span > best[1]:
-                best = (axis_y, span)
-
-    for band, segs in bands.items():
-        segs.sort(key=lambda s: s[0])
-        run: list[tuple[float, float, float]] = [segs[0]]
-        run_end = segs[0][2]
-        for s in segs[1:]:
-            if s[0] - run_end <= CHAIN_MAX_GAP_MM:
-                run.append(s)
-                run_end = max(run_end, s[2])
-            else:
-                qualify(run)
-                run = [s]
-                run_end = s[2]
-        qualify(run)
-    return best
-
 
 # --------------------------------------------------------------------------- #
 # vector (PDF)                                                                 #
@@ -496,6 +447,7 @@ def _iter_corpus(root: Path) -> list[Path]:
     exts = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
     files: list[Path] = []
     excluded = 0
+    containers = 0
     for p in sorted(root.rglob("*")):
         if p.suffix.lower() not in exts or not p.is_file():
             continue
@@ -504,9 +456,25 @@ def _iter_corpus(root: Path) -> list[Path]:
         if "golden" in p.relative_to(root).parts:
             excluded += 1
             continue
+        # multi-page PDFs are containers (the zenodo archive PDF screens page 1
+        # only, duplicating the fetched page_001); the split `pages/` are the
+        # real screening units
+        if p.suffix.lower() == ".pdf":
+            try:
+                import fitz
+                with fitz.open(p) as doc:
+                    npages = doc.page_count
+            except Exception:
+                npages = 1  # let the classifier report UNREADABLE honestly
+            if npages > 1:
+                containers += 1
+                continue
         files.append(p)
     if excluded:
         print(f"note: excluded {excluded} committed golden fixture(s) under golden/ (not corpus data)",
+              file=sys.stderr)
+    if containers:
+        print(f"note: skipped {containers} multi-page PDF container(s) (screened via split pages instead)",
               file=sys.stderr)
     return files
 

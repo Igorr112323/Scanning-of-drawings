@@ -36,8 +36,12 @@ drawings** and report numbers with denominators:
   every push; **to be removed after the corpus PR merges**).
 - `actions/cache` carries `data/corpus/` across runs; push runs force a fresh
   `results.jsonl` (`--no-resume`) so every push re-measures end-to-end.
-- GitHub caps check-run annotation messages at ~4096 bytes; evidence notices are
-  now **chunked** (`-2`, `-3`…) so long logs/evidence blocks survive (`b8d1f99`).
+- GitHub caps check-run annotation **messages** at ~4096 bytes **and stores at
+  most ~10 annotations per check-run** — the rest are silently dropped. Evidence
+  notices are therefore **chunked** (`-2`, `-3`…) and emitted in priority order;
+  a single >3.4 KB annotation is hard-split. Verified: the b713040 run lost
+  every annotation after the 10th (CORPUS-SUMMARY, ZENODO-EVIDENCE, the PDF
+  diagnostics chunk ≥2) — fixed by the prioritized 7–8-annotation layout.
 
 ## 2. Data sources (see `docs/DATA_SOURCES.md`)
 
@@ -102,12 +106,40 @@ funnel; (2) root-cause the constant axis ≈ 0.700 and views = 4 telemetry (belo
 (3) page_033 NO_DIMS post-mortem; (4) only then harvest pipeline bugs from real
 rows.
 
+## 3a. Pipeline post-mortem #1 — page_001 / archive-PDF (2026-11-27, run `45989635683`, commit `b713040`)
+
+Fresh download (cache restore worked; zenodo + jcrzd instant), re-screen +
+pipeline re-measured. New funnel: **81 screened → 2 BODY_OF_REVOLUTION**
+(archive PDF + page_001 — same first page; see §4), 78 NOT_SUPPORTED,
+1 NO_DIMENSIONS, 0 pipeline OK.
+
+- **`page_001` and the archive PDF both processed → `NO_DIMS`, 47 dims parsed
+  (40 confident / 7 uncertain, auto_link_rate 0.85, 1 contradiction error),
+  `error_signature = "no revolution profile reconstructed"`, wall ~1.6–1.9 s.**
+  The dimension stage works on real pages; the *profile* stage returned empty —
+  because `find_axis` only considered dash-dot `AXIS` strokes, and on traced
+  pages the centre line is exported as separate thin strokes with no dash
+  attribute (same root cause as the screen bug, one level deeper).
+- **Fix (this push):** shared `detect_axis_chain` in `core/geometry.py` (moved
+  verbatim from the screen) + chain fallback in `find_axis`; regression test
+  `test_pipeline_axis_chain_fallback_reconstructs_profile`. Local: 141 passed
+  (Qt-GUI tests excluded — needs system libxkbcommon).
+- **Screen telemetry of the candidates is legit**: archive/page_001 both
+  BODY_OF_REVOLUTION at 0.06–0.14 s. page_033 flipped back to NOT_SUPPORTED.
+- **PDF census confirms auto-trace micro-segments**: pages 003/005/011/012/014
+  carry 3.8k–99.6k line items with p50 segment length 0.02–0.13 mm; the sheets
+  were emitted by a trace of a raster, not by CAD export. Clean pages
+  (page_001: 403×1.44 pt, 246×0.72 pt, 741 curves) exist but the trace noise
+  dominates the corpus.
+- **Multi-page PDFs are now excluded from screening** (the zenodo archive PDF
+  screens page 1 only, duplicating page_001); regression tests added.
+
 ## 4. Measured funnel (commit `339b96e`, check-run `140445276543`, 2026-11-26)
 
 | step | count | denominator / note |
 |---|---|---|
 | manifest records | 82 | zenodo 42 + jcrzd 40 |
-| screened | 81 | 82−81 = 1 row unaccounted for; NOT yet root-caused. Note: the title-like file and `page_001` report byte-identical metrics — suspected same PDF under two names; parity check pending |
+| screened | 81 | 82 manifest = 2 zenodo **archive** rows (PDF + STEP zip) + 40 zenodo page rows + 40 jcrzd rows; screening sees only .pdf/.png/.jpg/… → the `.zip` archive has no row ⇒ 81. Resolved by reading `_fetch_zenodo`: archive PDF is split to `pages/` (limit 40) and its manifest row stays alongside the page rows |
 | BODY_OF_REVOLUTION | **1** | zenodo `page_033` |
 | NO_DIMENSIONS | 1 | zenodo `page_002` |
 | NOT_SUPPORTED | 79 | zenodo 39 + jcrzd 40 |
@@ -140,9 +172,12 @@ dim tokens 27–101.
    the pipeline and returned `NO_DIMS` in 2.2 s — i.e. gates passed screen but
    the dimension stage found nothing (token format? Ø-glyph variants? gost-dim
    parse gap?). Post-mortem pending its (now untruncated) evidence row.
-4. **82 vs 81 rows** — one manifest row absent from the screened rows; cause under
-   investigation (title-like file and `page_001` report identical metrics, so a
-   duplicate-name case or a fetch/skip artifact is suspect).
+4. **82 vs 81 rows — root-caused** (local reading of `_fetch_zenodo` + evidence):
+   the STEP `.zip` archive row never yields a screened file, and the archive-PDF
+   manifest row screens as `1- 100 2D orthographic drawings` — **byte-identical
+   first page** to `page_001` (axis=0.947, sym=0.284, views=2, Ø=5, tokens=43 on
+   both rows). No file is missing; the two archive rows are the source of the
+   off-by-one.
 
 ## 5. Legal / attribution
 

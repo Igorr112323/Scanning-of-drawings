@@ -112,3 +112,19 @@ def test_hough_n4_shape_no_crash(tmp_path, monkeypatch):
     ev = classify_file(p)
     assert "crash" not in (ev.reason or "")
     assert ev.verdict in {"BODY_OF_REVOLUTION", "NOT_SUPPORTED", "NO_DIMENSIONS"}
+
+
+def test_pipeline_axis_chain_fallback_reconstructs_profile(tmp_path):
+    """page_001 post-mortem (zenodo run 2026-11-27): the pipeline's find_axis
+    only considered dash-dot AXIS strokes; on auto-traced pages the centre
+    line is exported as separate thin strokes, so extract_revolution returned
+    an empty profile and the corpus pipeline reported NO_DIMS — while the
+    screen had already flagged the page BODY_OF_REVOLUTION. Regression:
+    parse_pdf must find the axis chain and rebuild the half-profile."""
+    from core.pdf_parser import parse_pdf
+
+    pdf = tmp_path / "shaft_traced.pdf"
+    _make_shaft_pdf(pdf)  # rect outline + thin-segment centre line, no dash attr
+    drawing = parse_pdf(pdf)
+    assert drawing.profile, "profile must reconstruct from the traced centre line"
+    assert drawing.views and drawing.views[0].axis_y is not None

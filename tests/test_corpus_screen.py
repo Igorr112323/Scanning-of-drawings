@@ -56,3 +56,29 @@ def test_write_csv_and_summarize(tmp_path):
     assert {r["verdict"] for r in table} == {"BODY_OF_REVOLUTION"}
     summary = summarize(rows)
     assert "BODY_OF_REVOLUTION" in summary
+
+
+def test_multiline_pdf_containers_are_skipped(tmp_path):
+    """A 100-page archive PDF must not be screened (page 1 duplicates page_001)."""
+    import fitz
+
+    import core.corpus_screen as cs
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+
+    single = root / "page_001.pdf"
+    doc = fitz.open()
+    doc.new_page(width=200, height=100)
+    doc.save(single)
+    doc.close()
+
+    container = root / "1- 100 2D orthographic drawings.pdf"
+    doc = fitz.open()
+    for _ in range(3):
+        doc.new_page(width=200, height=100)
+    doc.save(container)
+    doc.close()
+
+    files = cs._iter_corpus(root)
+    assert [p.stem for p in files] == ["page_001"]

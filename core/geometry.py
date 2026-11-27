@@ -13,10 +13,84 @@ import math
 from core.models import ElementType, ProfilePoint, VectorElement
 
 
+# --------------------------------------------------------------------------- #
+# axis chain detection (traced dash-dot centre lines) — shared with corpus   #
+# --------------------------------------------------------------------------- #
+CHAIN_MIN_PIECES = 4      # collinear pieces needed for a dash-dot chain
+CHAIN_MAX_GAP_MM = 8.0    # GOST dash-dot gaps are 1.5–3 mm; 8 mm is generous
+CHAIN_MIN_COVERAGE = 0.45 # dash-dot cadence is ~70-80% coverage
+CHAIN_Y_BAND_MM = 3.0     # vectorized scans jitter; GOST text pitch is >=5 mm
+CHAIN_MIN_SPAN_MM = 120.0 # absolute — a revolution axis spans the view, not the page
+CHAIN_SCORE_FULL_MM = 250.0  # span at which the screen axis score saturates at 1.0
+
+
+def detect_axis_chain(horiz: list[tuple[float, float, float]],
+                      min_span_mm: float = CHAIN_MIN_SPAN_MM) -> tuple[float, float] | None:
+    """GOST centre lines whose dashes/dots are exported as separate thin
+    segments (auto-traced scans) carry no dash attribute at all — detect the
+    collinear chain itself: ≥4 pieces in one y band with ≤8 mm gaps and an
+    absolute span of at least `min_span_mm` (a revolution axis spans the
+    *view*, so page-width-relative thresholds are wrong for A2/A3 sheets).
+
+    Returns (axis_y_mm, span_mm) where axis_y_mm is the *mean* undisturbed y
+    of the winning pieces — band quantization must never leak into the mirror
+    symmetry comparison."""
+    bands: dict[int, list[tuple[float, float, float]]] = {}
+    for x0, y, x1 in horiz:
+        bands.setdefault(round(y / CHAIN_Y_BAND_MM), []).append((x0, y, x1))
+
+    best: tuple[float, float] | None = None
+
+    def qualify(run: list[tuple[float, float, float]]) -> None:
+        nonlocal best
+        pieces = len(run)
+        start = run[0][0]
+        end = max(s[2] for s in run)
+        span = end - start
+        cover = sum(s[2] - s[0] for s in run)
+        if pieces >= CHAIN_MIN_PIECES and span >= min_span_mm and cover / span >= CHAIN_MIN_COVERAGE:
+            axis_y = sum(s[1] for s in run) / pieces
+            if best is None or span > best[1]:
+                best = (axis_y, span)
+
+    for band, segs in bands.items():
+        segs.sort(key=lambda s: s[0])
+        run: list[tuple[float, float, float]] = [segs[0]]
+        run_end = segs[0][2]
+        for s in segs[1:]:
+            if s[0] - run_end <= CHAIN_MAX_GAP_MM:
+                run.append(s)
+                run_end = max(run_end, s[2])
+            else:
+                qualify(run)
+                run = [s]
+                run_end = s[2]
+        qualify(run)
+    return best
+
+
+def find_axis_chain(elements: list["VectorElement"]):
+    """Chain fallback for traced pages whose centre line carries no dash
+    attribute: collect every horizontal stroke (any width) and run the
+    collinear-chain detector. Returns (axis_y_mm, span_mm) or None."""
+    horiz: list[tuple[float, float, float]] = []
+    for e in elements:
+        if len(e.points) != 2 or e.type is ElementType.TEXT:
+            continue
+        (x0, y0), (x1, y1) = e.points
+        if abs(y1 - y0) <= 0.5:
+            horiz.append((min(x0, x1), (y0 + y1) / 2.0, max(x0, x1)))
+    return detect_axis_chain(horiz)
+
+
 def find_axis(elements: list[VectorElement]) -> tuple[str | None, float | None]:
     """Locate the revolution axis: the longest dash-dot line on the sheet.
 
     Returns ("horizontal", y_mm) or ("vertical", x_mm); (None, None) if absent.
+
+    Fallback for auto-traced drawings whose dash-dot centre line is exported
+    as separate thin strokes with no dash attribute (seen on the zenodo
+    open_mech pages): the collinear chain is detected directly.
     """
     best_len = 0.0
     best: tuple[str | None, float | None] = (None, None)
@@ -32,6 +106,11 @@ def find_axis(elements: list[VectorElement]) -> tuple[str | None, float | None]:
         else:
             best = ("vertical", (x0 + x1) / 2.0)
         best_len = length
+    if best[0] is not None:
+        return best
+    chain = find_axis_chain(elements)
+    if chain is not None:
+        return ("horizontal", chain[0])
     return best
 
 
