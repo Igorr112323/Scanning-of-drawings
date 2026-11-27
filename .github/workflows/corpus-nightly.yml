@@ -111,6 +111,73 @@ jobs:
       # surfaced as check-run annotations. jcrzd/ecado contribute aggregates
       # only (no license metadata — not redistributable); zenodo is CC BY 4.0
       # and its per-file rows are reported permissibly.
+      - name: Render profile-failure diagnostics
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv, json, math
+          from pathlib import Path
+          import fitz
+
+          root = Path("data/corpus")
+          manifest = {}
+          for line in (root / "manifest.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
+              line = line.strip()
+              if line:
+                  r = json.loads(line)
+                  manifest[r.get("id", "")] = r
+          results = [json.loads(l) for l in (root / "results.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()] if (root / "results.jsonl").exists() else []
+
+          MM_TO_PT = 72.0 / 25.4
+          out_dir = root / "diagnostics"
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          from core.pdf_parser import parse_pdf
+          from core.models import ElementType
+
+          COLORS = {"CONTOUR": (0.85, 0.1, 0.1), "DIMENSION_LINE": (0.1, 0.35, 0.9),
+                    "AXIS": (0.1, 0.65, 0.1), "TEXT": (0.4, 0.4, 0.4)}
+
+          for r in results:
+              dbg = r.get("profile_debug") or {}
+              if dbg.get("status") != "gap":
+                  continue
+              rid = r.get("id", "")
+              rec = manifest.get(rid) or {}
+              src_path = rec.get("path")
+              if not src_path or not Path(src_path).exists():
+                  continue
+              gap_a, gap_b = dbg.get("gap_at"), dbg.get("gap_before")
+              doc = fitz.open(src_path)
+              page = doc.load_page(0)
+
+              # (1) full page scan at 110 dpi
+              page.get_pixmap(dpi=110).save(str(out_dir / f"{rid}_full.png"))
+
+              # (2) same region with classified elements overlaid
+              drawing = parse_pdf(src_path)
+              for e in drawing.elements:
+                  c = COLORS.get(e.type.name)
+                  if c is None or len(e.points) != 2:
+                      continue
+                  (x0, y0), (x1, y1) = e.points
+                  p0, p1 = fitz.Point(x0 * MM_TO_PT, y0 * MM_TO_PT), fitz.Point(x1 * MM_TO_PT, y1 * MM_TO_PT)
+                  page.draw_line(p0, p1, color=c, width=0.7, overlay=True)
+              page.get_pixmap(dpi=110).save(str(out_dir / f"{rid}_overlay.png"))
+              doc.close()
+
+              # (3) crop around the failing interval (mm → pt), full sheet height
+              doc = fitz.open(src_path)
+              page = doc.load_page(0)
+              if gap_a is not None and gap_b is not None:
+                  x0 = max(0.0, gap_a - 35.0) * MM_TO_PT
+                  x1 = min(page.rect.width, gap_b + 35.0) * MM_TO_PT
+                  clip = fitz.Rect(x0, 0, x1, page.rect.height)
+                  page.get_pixmap(dpi=170, clip=clip).save(str(out_dir / f"{rid}_gap.png"))
+              doc.close()
+              print(f"diagnostic rendered for {rid}: gap x=[{gap_a},{gap_b}] mm")
+          PY
+
       - name: Emit summary annotations
         if: always()
         run: |
@@ -239,6 +306,7 @@ jobs:
             data/corpus/screening.csv
             data/corpus/results.jsonl
             docs/CORPUS_BENCHMARK.md
+            data/corpus/diagnostics/
             docs/BUG_HARVEST.md
             reports/
           if-no-files-found: warn
