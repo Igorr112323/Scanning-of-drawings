@@ -66,7 +66,7 @@ jobs:
       # this guards against a full-source outage).
       - name: Download corpus (hf_jcrzd, best effort)
         continue-on-error: true
-        run: python -m core.dataset_fetch --source hf_jcrzd --limit ${{ github.event_name == 'push' && '40' || github.event.inputs.limit || '200' }} --out data/corpus/hf_jcrzd
+        run: python -m core.dataset_fetch --source hf_jcrzd --limit ${{ github.event_name == 'push' && '40' || github.event.inputs.limit || '200' }} --out data/corpus/hf_jcrzd 2>&1 | tee /tmp/jcrzd.log
 
       - name: Screen corpus
         run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv
@@ -156,6 +156,18 @@ jobs:
           lp = Path("/tmp/corpus_run.log")
           if lp.exists():
               notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-12000:])
+          jp = Path("/tmp/jcrzd.log")
+          if jp.exists():
+              notice("JCRZD-LOG", jp.read_text(encoding="utf-8", errors="replace")[-3000:])
+
+          # per-file screening evidence for zenodo rows (CC BY 4.0 — citable)
+          e_lines = []
+          for r in sorted(screening, key=lambda r: r['id']):
+              if src_of(r['id']) != "zenodo_open_mech":
+                  continue
+              e_lines.append(f"{r['id']}: verdict={r['verdict']} axis={r['axis_score']} sym={r['symmetry_score']} views={r['views_count']} dia={r['dia_count']} dim_tokens={r['dim_token_count']} text_layer={r['text_layer']} reason={r['reason']}")
+          if e_lines:
+              notice("CORPUS-ZENODO-EVIDENCE", e_lines)
 
           lines = [f"manifest records: {len(manifest)}  by_source={dict(Counter(r.get('source','?') for r in manifest.values()))}",
                    f"screened: {len(screening)}"]

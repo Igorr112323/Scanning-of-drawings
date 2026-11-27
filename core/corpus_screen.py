@@ -326,7 +326,21 @@ def summarize(rows: list[Evidence]) -> str:
 
 def _iter_corpus(root: Path) -> list[Path]:
     exts = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-    return sorted(p for p in root.rglob("*") if p.suffix.lower() in exts and p.is_file())
+    files: list[Path] = []
+    excluded = 0
+    for p in sorted(root.rglob("*")):
+        if p.suffix.lower() not in exts or not p.is_file():
+            continue
+        # committed test fixtures live under data/corpus/golden/ and are NOT
+        # corpus data — they must never enter screen/pipeline metrics
+        if "golden" in p.relative_to(root).parts:
+            excluded += 1
+            continue
+        files.append(p)
+    if excluded:
+        print(f"note: excluded {excluded} committed golden fixture(s) under golden/ (not corpus data)",
+              file=sys.stderr)
+    return files
 
 
 def main(argv: list[str] | None = None) -> int:
