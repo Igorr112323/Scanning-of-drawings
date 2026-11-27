@@ -210,6 +210,14 @@ def classify_pdf(path: str | Path) -> Evidence:
         ev.reason = "blank page: no stroked geometry and no text"
         return ev
 
+    def _maybe_run(band, start, end, pieces, cover, best, page_width):
+        span = end - start
+        if pieces >= CHAIN_MIN_PIECES and span >= CHAIN_AXIS_SPAN * page_width \
+                and cover / span >= CHAIN_MIN_COVERAGE:
+            if best is None or span > best[2] - best[1]:
+                return (band, start, end, pieces, cover)
+        return best
+
     def _chain_axis(horiz: list[tuple[float, float, float]], page_width: float):
         """GOST centre lines whose dashes/dots are exported as separate thin
         segments carry no dash attribute at all — detect the collinear chain
@@ -220,20 +228,23 @@ def classify_pdf(path: str | Path) -> Evidence:
         best = None
         for band, segs in bands.items():
             segs.sort()
-            if len(segs) < CHAIN_MIN_PIECES:
-                continue
-            span = segs[-1][1] - segs[0][0]
-            if span < CHAIN_AXIS_SPAN * page_width:
-                continue
-            gaps = [segs[i + 1][0] - segs[i][1] for i in range(len(segs) - 1)]
-            if gaps and max(gaps) > CHAIN_MAX_GAP_MM:
-                continue
-            covered = sum(x1 - x0 for x0, x1 in segs)
-            if covered / span < CHAIN_MIN_COVERAGE:
-                continue
-            if best is None or span > best[1]:
-                best = (band * CHAIN_Y_BAND_MM, span)
-        return best
+            # find the longest gap-free run — sparse ink far from the chain
+            # must not disqualify an otherwise valid dash-dot chain
+            run_start, run_end = segs[0]
+            run_pieces = 1
+            run_cover = run_end - run_start
+
+            for x0, x1 in segs[1:]:
+                if x0 - run_end <= CHAIN_MAX_GAP_MM:
+                    run_end = max(run_end, x1)
+                    run_pieces += 1
+                    run_cover += x1 - x0
+                else:
+                    best = _maybe_run(band, run_start, run_end, run_pieces, run_cover, best, page_width)
+                    run_start, run_end = x0, x1
+                    run_pieces, run_cover = 1, x1 - x0
+            best = _maybe_run(band, run_start, run_end, run_pieces, run_cover, best, page_width)
+        return (best[0] * CHAIN_Y_BAND_MM, best[2] - best[1]) if best else None
 
     # --- axis: longest dashed horizontal span, capped at 1.0
     axis_y = None
@@ -309,7 +320,10 @@ def classify_image(path: str | Path) -> Evidence:
     horizontal: list[tuple[float, float, float]] = []  # x0, y_mid, span
     if lines is not None:
         for raw in lines:
-            x1, y1, x2, y2 = (int(v) for v in raw[0])
+            arr = np.asarray(raw).ravel()
+            if arr.size < 4:
+                continue
+            x1, y1, x2, y2 = (int(v) for v in arr[:4])
             if abs(y2 - y1) <= max(2.0, h * 0.004):
                 horizontal.append((min(x1, x2), (y1 + y2) / 2.0, abs(x2 - x1)))
 
