@@ -69,7 +69,7 @@ jobs:
         run: python -m core.dataset_fetch --source hf_jcrzd --limit ${{ github.event_name == 'push' && '40' || github.event.inputs.limit || '200' }} --out data/corpus/hf_jcrzd 2>&1 | tee /tmp/jcrzd.log
 
       - name: Screen corpus
-        run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv
+        run: python -m core.corpus_screen --corpus data/corpus --out data/corpus/screening.csv 2>&1 | tee /tmp/screen.log
 
       - name: Run pipeline on BODY_OF_REVOLUTION files
         run: |
@@ -156,6 +156,9 @@ jobs:
           lp = Path("/tmp/corpus_run.log")
           if lp.exists():
               notice("CORPUS-RUN-LOG", lp.read_text(encoding="utf-8", errors="replace")[-12000:])
+          sp = Path("/tmp/screen.log")
+          if sp.exists():
+              notice("SCREEN-LOG", sp.read_text(encoding="utf-8", errors="replace")[-5000:])
           jp = Path("/tmp/jcrzd.log")
           if jp.exists():
               notice("JCRZD-LOG", jp.read_text(encoding="utf-8", errors="replace")[-3000:])

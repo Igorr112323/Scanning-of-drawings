@@ -334,12 +334,17 @@ def classify_image(path: str | Path) -> Evidence:
 
 
 def classify_file(path: str | Path) -> Evidence:
-    suffix = Path(path).suffix.lower()
-    if suffix == ".pdf":
-        return classify_pdf(path)
-    if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
-        return classify_image(path)
-    return Evidence(str(path), "UNREADABLE", reason=f"unsupported extension: {suffix}")
+    """Per-file isolation — a crashing file becomes UNREADABLE evidence,
+    never a failed batch (same principle as the pipeline workers)."""
+    try:
+        suffix = Path(path).suffix.lower()
+        if suffix == ".pdf":
+            return classify_pdf(path)
+        if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
+            return classify_image(path)
+        return Evidence(str(path), "UNREADABLE", reason=f"unsupported extension: {suffix}")
+    except Exception as exc:
+        return Evidence(str(path), "UNREADABLE", reason=f"screen crash: {exc.__class__.__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------- #
